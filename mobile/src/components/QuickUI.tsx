@@ -1,0 +1,7 @@
+import { router } from 'expo-router';
+import { Pressable,StyleSheet,Text,View } from 'react-native';
+import { COLORS } from '../constants/theme';
+export const quickStyles=StyleSheet.create({
+ head:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',paddingVertical:14},title:{fontSize:22,fontWeight:'900',color:COLORS.text,marginVertical:10},text:{fontSize:12,lineHeight:18,color:COLORS.textSecondary},row:{flexDirection:'row',gap:10,marginVertical:10},button:{padding:14,minHeight:46,borderRadius:12,borderWidth:1,borderColor:COLORS.border,backgroundColor:COLORS.surface,alignItems:'center',justifyContent:'center'},primary:{backgroundColor:COLORS.primary},buttonText:{color:COLORS.primaryDark,fontWeight:'800',fontSize:12},error:{color:COLORS.danger,fontSize:12,lineHeight:18,marginVertical:10},count:{flex:1,alignItems:'center',paddingVertical:12},value:{fontSize:22,fontWeight:'900',color:COLORS.text},active:{backgroundColor:COLORS.primarySoft,borderColor:COLORS.primary}
+});
+export function QuickHeader({history=true,disabled=false}:{history?:boolean;disabled?:boolean}){return <View style={quickStyles.head}><Pressable accessibilityRole="button" disabled={disabled} onPress={()=>router.canGoBack()?router.back():router.replace('/')} style={quickStyles.button}><Text style={quickStyles.buttonText}>← Back</Text></Pressable>{history&&<Pressable accessibilityRole="button" disabled={disabled} onPress={()=>router.push('/quick-detection/history')} style={quickStyles.button}><Text style={quickStyles.buttonText}>History</Text></Pressable>}</View>;}

@@ -1,0 +1,12 @@
+torch>=2.0
+torchvision>=0.15
+ultralytics==8.2.103
+scikit-learn>=1.0
+numpy
+Pillow
+matplotlib
+fastapi
+uvicorn
+python-multipart
+
+python-dotenv==1.2.3

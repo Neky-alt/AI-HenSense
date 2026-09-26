@@ -1,0 +1,88 @@
+# macOS
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+
+# Node.js
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# SQLite runtime database
+*.db
+
+# Build output
+dist/
+build/
+
+# Environment variables
+.env*
+!.env.example
+# Python local environments and caches
+**/.venv/
+**/__pycache__/
+*.pyc
+
+# AI model weights - kept locally
+ai_service/hen_repro/weights/
+
+# Local integration/export backups
+pr_exports/
+web_backup/
+
+# Handover: local runtime data, secrets, artifacts and large bundles
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite3-wal
+*.sqlite3-shm
+*.pt
+*.pth
+*.onnx
+*.log
+*.tsbuildinfo
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage/
+test-results/
+playwright-report/
+*.zip
+*.tar.gz
+*.bak
+!.env.example
+!**/.env.example
+*.sqlite-wal
+*.sqlite-shm
+*.db-journal
+*.sqlite-journal
+*.sqlite3-journal
+*.pem
+*.key
+
+# Release exclusions
+backend/local_storage/
+backend/test_assets/
+mobile/test_assets/
+mobile/android/
+.expo/
+.venv*/
+*.tar
+*.bundle
+*.p12
+*.mobileprovision
+.env.*
+!**/.env.example
+!.env.example
+
+# Native source is retained; signing/user state/builds are private
+Pods/
+xcuserdata/
+.xcode.env.local
+*.xcuserstate

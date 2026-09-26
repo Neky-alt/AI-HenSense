@@ -1,0 +1,254 @@
+"""Device, Detection History, Alerts and BE-03 Run Detection Now endpoints."""
+
+from enum import Enum
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.farm_access import authorized_db
+from app.enums import CaptureSourceType, DeviceStatus, FarmingType, TriggerType
+from app.models import Detection, Device
+from app.responses import failure, success
+from app.services.ai_adapter import (
+    AIAdapter,
+    AIInvalidResponse,
+    AIServiceUnavailable,
+    get_ai_adapter,
+)
+from app.services.capture_adapter import (
+    CaptureAdapter,
+    CaptureAdapterUnavailable,
+    CaptureFailed,
+    get_capture_adapter,
+)
+from app.services.core_data import (
+    alerts_for_device,
+    compute_device_status,
+    detection_history_for_device,
+    latest_monitoring_detection_for_device,
+    serialize_alert,
+    serialize_detection,
+    serialize_device,
+)
+from app.services.detection_pipeline import record_detection_failure
+from app.services.inference_media import persist_inference_media
+from app.services.detection_images import ImageStorageError, resolve_image_path
+
+router = APIRouter(prefix="/devices", tags=["devices"])
+
+
+class DeviceListStatus(str, Enum):
+    normal = "normal"
+    warning = "warning"
+    offline = "offline"
+
+
+class DeviceSort(str, Enum):
+    low_desc = "low_desc"
+    low_asc = "low_asc"
+    name_asc = "name_asc"
+    name_desc = "name_desc"
+
+
+def _active_device_or_404(db: Session, device_id: str) -> Device:
+    device = db.scalar(
+        select(Device).where(
+            Device.device_id == device_id,
+            Device.is_active.is_(True),
+        )
+    )
+    if device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return device
+
+
+def _low_metric(item: tuple[Device, Detection | None]) -> float:
+    device, latest = item
+    if latest is None:
+        return -1.0
+    if device.farming_type == FarmingType.free_range.value:
+        return float(latest.low_count)
+    return float(latest.low_ratio) if latest.low_ratio is not None else -1.0
+
+
+@router.get("", summary="List devices")
+def list_devices(
+    farming_type: FarmingType | None = Query(default=None),
+    status: DeviceListStatus | None = Query(default=None),
+    sort: DeviceSort | None = Query(default=None),
+    db: Session = Depends(authorized_db),
+) -> dict:
+    stmt = select(Device).where(Device.is_active.is_(True))
+    if farming_type is not None:
+        stmt = stmt.where(Device.farming_type == farming_type.value)
+
+    devices = list(db.scalars(stmt).all())
+    items = [
+        (device, latest_monitoring_detection_for_device(db, device))
+        for device in devices
+    ]
+
+    if status is not None:
+        filtered: list[tuple[Device, Detection | None]] = []
+        for device, latest in items:
+            device_status = compute_device_status(device).value
+            if status == DeviceListStatus.offline:
+                if device_status == DeviceStatus.offline.value:
+                    filtered.append((device, latest))
+                continue
+            if (
+                device_status != DeviceStatus.offline.value
+                and latest is not None
+                and latest.monitoring_status == status.value
+            ):
+                filtered.append((device, latest))
+        items = filtered
+
+    if sort == DeviceSort.low_desc:
+        items.sort(key=_low_metric, reverse=True)
+    elif sort == DeviceSort.low_asc:
+        items.sort(key=lambda item: (_low_metric(item) < 0, _low_metric(item)))
+    elif sort == DeviceSort.name_asc:
+        items.sort(key=lambda item: (item[0].device_name or item[0].device_code).casefold())
+    elif sort == DeviceSort.name_desc:
+        items.sort(
+            key=lambda item: (item[0].device_name or item[0].device_code).casefold(),
+            reverse=True,
+        )
+    else:
+        items.sort(key=lambda item: item[0].device_code.casefold())
+
+    return success([serialize_device(device, latest) for device, latest in items])
+
+
+@router.get("/{device_id}", summary="Get device detail")
+def get_device(device_id: str, db: Session = Depends(authorized_db)) -> dict:
+    device = _active_device_or_404(db, device_id)
+    latest = latest_monitoring_detection_for_device(db, device)
+    return success(serialize_device(device, latest))
+
+
+@router.get("/{device_id}/detections/latest", summary="Get latest monitoring detection")
+def get_latest_detection(device_id: str, db: Session = Depends(authorized_db)) -> dict:
+    device = _active_device_or_404(db, device_id)
+    latest = latest_monitoring_detection_for_device(db, device)
+    return success(serialize_detection(latest) if latest is not None else None)
+
+
+@router.get("/{device_id}/detections", summary="Get detection history")
+def get_detection_history(device_id: str, db: Session = Depends(authorized_db)) -> dict:
+    _active_device_or_404(db, device_id)
+    detections = detection_history_for_device(db, device_id)
+    return success([serialize_detection(item) for item in detections])
+
+
+@router.get("/{device_id}/alerts", summary="Get device alerts")
+def get_device_alerts(device_id: str, db: Session = Depends(authorized_db)) -> dict:
+    _active_device_or_404(db, device_id)
+    alerts = alerts_for_device(db, device_id)
+    return success([serialize_alert(item) for item in alerts])
+
+
+@router.get("/{device_id}/detections/{detection_id}/image", summary="Read saved detection image")
+def get_detection_image(device_id: str, detection_id: str, db: Session = Depends(authorized_db)):
+    return _detection_media(device_id, detection_id, db, annotated=False)
+
+
+@router.get("/{device_id}/detections/{detection_id}/annotated-image", summary="Read annotated detection image")
+def get_annotated_image(device_id: str, detection_id: str, db: Session = Depends(authorized_db)):
+    return _detection_media(device_id, detection_id, db, annotated=True)
+
+
+def _detection_media(device_id: str, detection_id: str, db: Session, *, annotated: bool):
+    _active_device_or_404(db, device_id)
+    detection = db.scalar(
+        select(Detection).where(
+            Detection.detection_id == detection_id,
+            Detection.device_id == device_id,
+            Detection.deleted_at.is_(None),
+            Detection.image_deleted_at.is_(None),
+        )
+    )
+    relative_path = (detection.annotated_image_path if annotated else detection.image_path) if detection else None
+    if not relative_path:
+        raise HTTPException(status_code=404, detail="Detection image not found")
+    image = resolve_image_path(relative_path)
+    if image is None:
+        raise HTTPException(status_code=404, detail="Detection image not found")
+    return FileResponse(
+        image,
+        media_type="image/png" if image.suffix.lower() == ".png" else "image/jpeg",
+        headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.post("/{device_id}/detect", summary="Run manual detection now")
+def run_manual_detection_now(
+    device_id: str,
+    db: Session = Depends(authorized_db),
+    capture_adapter: CaptureAdapter = Depends(get_capture_adapter),
+    ai_adapter: AIAdapter = Depends(get_ai_adapter),
+) -> dict:
+    """Capture one current frame, call the real AI service, save and return Detection.
+
+    Monitoring Enabled intentionally does not block this endpoint.  Free-range manual
+    results are immediate single-frame observations; they are saved in History but do not
+    replace the latest formal Result Snapshot used by monitoring cards/Home.
+    """
+    device = _active_device_or_404(db, device_id)
+    if compute_device_status(device) != DeviceStatus.online:
+        return JSONResponse(
+            status_code=409,
+            content=failure("DEVICE_OFFLINE", "Device is offline"),
+        )
+
+    try:
+        frame = capture_adapter.capture(device)
+    except CaptureAdapterUnavailable:
+        return JSONResponse(
+            status_code=503,
+            content=failure(
+                "CAPTURE_NOT_CONFIGURED",
+                "Camera capture adapter is not configured for this backend",
+            ),
+        )
+    except CaptureFailed:
+        record_detection_failure(db, device, "Camera capture failed.")
+        return JSONResponse(
+            status_code=502,
+            content=failure("DETECTION_FAILED", "Camera capture failed"),
+        )
+
+    try:
+        ai_result = ai_adapter.infer(device, frame)
+    except AIServiceUnavailable:
+        record_detection_failure(db, device, "AI inference service is unavailable.")
+        return JSONResponse(
+            status_code=503,
+            content=failure("AI_SERVICE_UNAVAILABLE", "AI inference service is unavailable"),
+        )
+    except AIInvalidResponse:
+        record_detection_failure(db, device, "AI returned an invalid detection result.")
+        return JSONResponse(
+            status_code=502,
+            content=failure("INVALID_AI_RESULT", "AI returned an invalid detection result"),
+        )
+    except Exception:
+        record_detection_failure(db, device)
+        return JSONResponse(
+            status_code=502,
+            content=failure("DETECTION_FAILED", "Detection task failed"),
+        )
+
+    try:
+        detection = persist_inference_media(db, device, frame, ai_result)
+    except ImageStorageError:
+        record_detection_failure(db, device, "Detection image could not be saved.")
+        return JSONResponse(status_code=507, content=failure("IMAGE_STORAGE_FAILED", "Detection image could not be saved"))
+    except ValueError:
+        record_detection_failure(db, device, "AI returned an invalid detection result.")
+        return JSONResponse(status_code=502, content=failure("INVALID_AI_RESULT", "AI returned an invalid detection result"))
+
+    return success(serialize_detection(detection))

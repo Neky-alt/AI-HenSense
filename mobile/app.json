@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "HenSense",
+    "slug": "hensense",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/brand/hensense-app-icon-v45.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.yifan678.hensense",
+      "icon": "./assets/brand/hensense-app-icon-v45.png"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#FFE09C",
+        "foregroundImage": "./assets/brand/hensense-android-foreground.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/brand/hensense-app-icon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font",
+      "expo-asset",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow HenSense to take a photo for Quick Detection.",
+          "photosPermission": "Allow HenSense to select a photo for Quick Detection.",
+          "microphonePermission": false
+        }
+      ]
+    ],
+    "scheme": "hensense"
+  }
+}
