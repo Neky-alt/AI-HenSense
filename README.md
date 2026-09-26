@@ -4,7 +4,7 @@ HenSense 是 COMP5703 的家禽监测软件，提供 Web、Mobile、设备检测
 
 ## 从哪里开始
 
-1. 新队友先读 [部署指南](docs/DEPLOYMENT.md)，准备依赖、Supabase 和私下交接资源。
+1. 先读 [部署指南](docs/DEPLOYMENT.md)，准备依赖、Supabase 和私下交接资源。
 2. 按 [交接清单](docs/HANDOVER.md) 确认权限、交付文件和演示数据。
 3. 操作人员使用 [用户手册](docs/USER_GUIDE.md)，开发人员使用 [架构](docs/ARCHITECTURE.md) 和 [API 参考](docs/API_REFERENCE.md)。
 
