@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     AI_SERVICE_URL: str = "http://127.0.0.1:8002"
     AI_SERVICE_TIMEOUT_SECONDS: float = 120.0
 
+    # ---------- Hardware internal API ----------
+    # Shared secret used only by Raspberry Pi / trusted hardware clients.
+    # Never expose this value to Web / Mobile clients.
+    HARDWARE_API_KEY: str = ""
+
     # Camera 硬件实现仍由 Hardware + Development 对接。默认不伪造拍摄结果。
     # 本地真模型联调时显式使用 test_file，并读取下面的测试图片。
     CAPTURE_ADAPTER_MODE: str = "unconfigured"
