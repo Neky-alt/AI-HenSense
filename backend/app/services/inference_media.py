@@ -8,7 +8,7 @@ from app.services.detection_images import remove_image, save_capture_image
 from app.services.detection_pipeline import persist_ai_result
 
 
-def persist_inference_media(db, device, frame, result, *, source=CaptureSourceType.pi_camera, provenance=None):
+def persist_inference_media(db, device, frame, result, *, source=CaptureSourceType.pi_camera, trigger_type=TriggerType.manual, provenance=None):
     paths = []
     try:
         original = save_capture_image(frame, device.device_id)
@@ -26,7 +26,7 @@ def persist_inference_media(db, device, frame, result, *, source=CaptureSourceTy
         })
         return persist_ai_result(
             db, device, replace(result, detected_at=result.detected_at or frame.captured_at),
-            trigger_type=TriggerType.manual, capture_source_type=source,
+            trigger_type=trigger_type, capture_source_type=source,
             image_path=original, annotated_image_path=annotated, provenance=metadata,
         )
     except Exception:
