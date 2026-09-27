@@ -1,9 +1,10 @@
 """Internal Raspberry Pi / hardware integration routes."""
 
+import json
 from app.services.hardware_config import get_device_monitoring_config
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -17,7 +18,7 @@ from app.services.hardware_commands import (
     complete_command,
     fail_command,
 )
-from app.services.ai_adapter import AIAdapter, get_ai_adapter
+from app.services.ai_adapter import AIInvalidResponse, normalize_ai_payload
 from app.services.capture_adapter import CapturedFrame
 from app.services.hardware_command_execution import (
     execute_manual_detection_command,
@@ -133,16 +134,18 @@ def claim_device_command(
 
 @router.post(
     "/devices/{device_id}/commands/{command_id}/detection",
-    summary="Submit image for a manual detection command",
+    summary="Submit locally inferred manual detection result",
 )
 async def submit_manual_detection(
     device_id: str,
     command_id: str,
+    result_json: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    ai_adapter: AIAdapter = Depends(get_ai_adapter),
     _: None = Depends(require_hardware_key),
 ) -> dict:
+    """Receive an image and inference result produced locally by the Raspberry Pi."""
+
     device = db.get(Device, device_id)
 
     if device is None or not device.is_active:
@@ -176,6 +179,25 @@ async def submit_manual_detection(
             detail="Uploaded image is empty",
         )
 
+    try:
+        payload = json.loads(result_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="result_json must be valid JSON",
+        ) from exc
+
+    try:
+        result = normalize_ai_payload(
+            payload,
+            expected_mode=device.farming_type,
+        )
+    except AIInvalidResponse as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
     filename = (
         Path(file.filename).name
         if file.filename
@@ -195,7 +217,7 @@ async def submit_manual_detection(
             device,
             command,
             frame,
-            ai_adapter=ai_adapter,
+            result,
         )
 
     except ValueError as exc:

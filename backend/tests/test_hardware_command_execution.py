@@ -22,24 +22,6 @@ class FakeDB:
         return self.command
 
 
-class FakeAIAdapter:
-    def __init__(self, *, error=None):
-        self.error = error
-        self.calls = 0
-
-    def infer(self, device, frame):
-        self.calls += 1
-
-        if self.error is not None:
-            raise self.error
-
-        return AIInferenceResult(
-            total_count=5,
-            normal_count=4,
-            low_count=1,
-        )
-
-
 def make_device():
     return SimpleNamespace(
         device_id="device-001",
@@ -53,6 +35,8 @@ def make_command():
         device_id="device-001",
         command_type=CommandType.manual_detection.value,
         command_status=CommandStatus.running.value,
+        result_detection_id=None,
+        error_message=None,
     )
 
 
@@ -64,11 +48,19 @@ def make_frame():
     )
 
 
+def make_result():
+    return AIInferenceResult(
+        total_count=5,
+        normal_count=4,
+        low_count=1,
+    )
+
+
 def test_manual_detection_command_completes(monkeypatch):
     device = make_device()
     command = make_command()
     db = FakeDB(command)
-    ai = FakeAIAdapter()
+    result = make_result()
 
     observed = {}
 
@@ -82,9 +74,12 @@ def test_manual_detection_command_completes(monkeypatch):
         provenance,
         **kwargs,
     ):
+        observed["db"] = db_arg
+        observed["device"] = device_arg
+        observed["frame"] = frame_arg
+        observed["result"] = result_arg
         observed["trigger_type"] = trigger_type
         observed["provenance"] = provenance
-        observed["result"] = result_arg
 
         return SimpleNamespace(
             detection_id="detection-001",
@@ -121,33 +116,56 @@ def test_manual_detection_command_completes(monkeypatch):
         device,
         command,
         make_frame(),
-        ai_adapter=ai,
+        result,
     )
 
-    assert ai.calls == 1
-
+    assert observed["result"] is result
     assert observed["trigger_type"] == TriggerType.manual
-    assert observed["provenance"]["origin"] == "hardware_command"
-    assert observed["provenance"]["command_id"] == "command-001"
 
-    assert observed["result_detection_id"] == "detection-001"
+    assert (
+        observed["provenance"]["origin"]
+        == "pi_local_inference"
+    )
 
-    assert completed.command_status == CommandStatus.completed.value
-    assert completed.result_detection_id == "detection-001"
+    assert (
+        observed["provenance"]["command_id"]
+        == "command-001"
+    )
+
+    assert (
+        observed["result_detection_id"]
+        == "detection-001"
+    )
+
+    assert (
+        completed.command_status
+        == CommandStatus.completed.value
+    )
+
+    assert (
+        completed.result_detection_id
+        == "detection-001"
+    )
 
 
-def test_ai_failure_marks_command_failed(monkeypatch):
+def test_persistence_failure_marks_command_failed(
+    monkeypatch,
+):
     device = make_device()
     command = make_command()
     db = FakeDB(command)
-
-    ai = FakeAIAdapter(
-        error=RuntimeError("AI service unavailable")
-    )
+    result = make_result()
 
     recorded = {}
 
-    def fake_record_failure(db_arg, device_arg, message):
+    def fake_persist(*args, **kwargs):
+        raise RuntimeError("Persistence failed")
+
+    def fake_record_failure(
+        db_arg,
+        device_arg,
+        message,
+    ):
         recorded["failure_message"] = message
 
     def fake_fail(
@@ -159,10 +177,18 @@ def test_ai_failure_marks_command_failed(monkeypatch):
     ):
         recorded["command_error"] = error_message
 
-        command_arg.command_status = CommandStatus.failed.value
+        command_arg.command_status = (
+            CommandStatus.failed.value
+        )
         command_arg.error_message = error_message
 
         return command_arg
+
+    monkeypatch.setattr(
+        execution,
+        "persist_inference_media",
+        fake_persist,
+    )
 
     monkeypatch.setattr(
         execution,
@@ -178,28 +204,46 @@ def test_ai_failure_marks_command_failed(monkeypatch):
 
     with pytest.raises(
         RuntimeError,
-        match="AI service unavailable",
+        match="Persistence failed",
     ):
         execution.execute_manual_detection_command(
             db,
             device,
             command,
             make_frame(),
-            ai_adapter=ai,
+            result,
         )
 
     assert db.rollback_calls == 1
-    assert recorded["failure_message"] == "AI service unavailable"
-    assert recorded["command_error"] == "AI service unavailable"
 
-    assert command.command_status == CommandStatus.failed.value
+    assert (
+        recorded["failure_message"]
+        == "Persistence failed"
+    )
+
+    assert (
+        recorded["command_error"]
+        == "Persistence failed"
+    )
+
+    assert (
+        command.command_status
+        == CommandStatus.failed.value
+    )
+
+    assert (
+        command.error_message
+        == "Persistence failed"
+    )
 
 
 def test_pending_command_is_rejected():
     device = make_device()
     command = make_command()
 
-    command.command_status = CommandStatus.pending.value
+    command.command_status = (
+        CommandStatus.pending.value
+    )
 
     with pytest.raises(
         ValueError,
@@ -210,7 +254,7 @@ def test_pending_command_is_rejected():
             device,
             command,
             make_frame(),
-            ai_adapter=FakeAIAdapter(),
+            make_result(),
         )
 
 
@@ -218,7 +262,9 @@ def test_wrong_command_type_is_rejected():
     device = make_device()
     command = make_command()
 
-    command.command_type = CommandType.manual_screenshot.value
+    command.command_type = (
+        CommandType.manual_screenshot.value
+    )
 
     with pytest.raises(
         ValueError,
@@ -229,5 +275,24 @@ def test_wrong_command_type_is_rejected():
             device,
             command,
             make_frame(),
-            ai_adapter=FakeAIAdapter(),
+            make_result(),
+        )
+
+
+def test_command_for_different_device_is_rejected():
+    device = make_device()
+    command = make_command()
+
+    command.device_id = "different-device"
+
+    with pytest.raises(
+        ValueError,
+        match="Command does not belong to device",
+    ):
+        execution.execute_manual_detection_command(
+            FakeDB(command),
+            device,
+            command,
+            make_frame(),
+            make_result(),
         )

@@ -13,10 +13,8 @@ from app.database import Base, get_db
 from app.enums import CommandStatus, CommandType
 from app.main import app
 from app.models import Device, DeviceCommand, Farm, Profile, utcnow
-from types import SimpleNamespace
-
-from app.services.ai_adapter import get_ai_adapter
 import app.routers.hardware as hardware_router
+
 
 DEVICE_ID = "20000000-0000-0000-0000-000000000001"
 INACTIVE_DEVICE_ID = "20000000-0000-0000-0000-000000000099"
@@ -125,6 +123,7 @@ def command_api(monkeypatch):
 
     def override_get_db():
         test_db = TestSession()
+
         try:
             yield test_db
         finally:
@@ -153,7 +152,9 @@ def hardware_headers() -> dict[str, str]:
 
 
 def claim_url(device_id: str = DEVICE_ID) -> str:
-    return f"/api/v1/hardware/devices/{device_id}/commands/claim"
+    return (
+        f"/api/v1/hardware/devices/{device_id}/commands/claim"
+    )
 
 
 def complete_url(
@@ -205,21 +206,38 @@ def test_claim_oldest_pending_command(command_api):
     assert body["data"]["command_status"] == "running"
 
     with TestSession() as db:
-        first = db.get(DeviceCommand, COMMAND_1_ID)
-        second = db.get(DeviceCommand, COMMAND_2_ID)
+        first = db.get(
+            DeviceCommand,
+            COMMAND_1_ID,
+        )
+        second = db.get(
+            DeviceCommand,
+            COMMAND_2_ID,
+        )
 
-        assert first.command_status == CommandStatus.running.value
-        assert second.command_status == CommandStatus.pending.value
+        assert (
+            first.command_status
+            == CommandStatus.running.value
+        )
+
+        assert (
+            second.command_status
+            == CommandStatus.pending.value
+        )
 
 
-def test_claim_returns_null_when_no_pending_command(command_api):
+def test_claim_returns_null_when_no_pending_command(
+    command_api,
+):
     client, TestSession = command_api
 
     with TestSession() as db:
         commands = db.query(DeviceCommand).all()
 
         for command in commands:
-            command.command_status = CommandStatus.completed.value
+            command.command_status = (
+                CommandStatus.completed.value
+            )
 
         db.commit()
 
@@ -231,6 +249,7 @@ def test_claim_returns_null_when_no_pending_command(command_api):
     assert response.status_code == 200
 
     body = response.json()
+
     assert body["success"] is True
     assert body["data"] is None
 
@@ -264,9 +283,16 @@ def test_complete_running_command(command_api):
     assert body["data"]["error_message"] is None
 
     with TestSession() as db:
-        command = db.get(DeviceCommand, COMMAND_1_ID)
+        command = db.get(
+            DeviceCommand,
+            COMMAND_1_ID,
+        )
 
-        assert command.command_status == CommandStatus.completed.value
+        assert (
+            command.command_status
+            == CommandStatus.completed.value
+        )
+
         assert command.executed_at is not None
 
 
@@ -294,14 +320,28 @@ def test_fail_running_command(command_api):
 
     assert body["success"] is True
     assert body["data"]["command_status"] == "failed"
-    assert body["data"]["error_message"] == "Camera capture failed"
+    assert (
+        body["data"]["error_message"]
+        == "Camera capture failed"
+    )
     assert body["data"]["executed_at"] is not None
 
     with TestSession() as db:
-        command = db.get(DeviceCommand, COMMAND_1_ID)
+        command = db.get(
+            DeviceCommand,
+            COMMAND_1_ID,
+        )
 
-        assert command.command_status == CommandStatus.failed.value
-        assert command.error_message == "Camera capture failed"
+        assert (
+            command.command_status
+            == CommandStatus.failed.value
+        )
+
+        assert (
+            command.error_message
+            == "Camera capture failed"
+        )
+
         assert command.executed_at is not None
 
 
@@ -322,7 +362,9 @@ def test_cannot_complete_pending_command(command_api):
     assert body["success"] is False
 
 
-def test_inactive_device_cannot_claim_command(command_api):
+def test_inactive_device_cannot_claim_command(
+    command_api,
+):
     client, _ = command_api
 
     response = client.post(
@@ -332,7 +374,8 @@ def test_inactive_device_cannot_claim_command(command_api):
 
     assert response.status_code == 404
 
-def test_submit_manual_detection_image(
+
+def test_submit_manual_detection_result(
     command_api,
     monkeypatch,
 ):
@@ -350,10 +393,6 @@ def test_submit_manual_detection_image(
         == CommandStatus.running.value
     )
 
-    fake_ai = object()
-
-    app.dependency_overrides[get_ai_adapter] = lambda: fake_ai
-
     observed = {}
 
     def fake_execute(
@@ -361,13 +400,18 @@ def test_submit_manual_detection_image(
         device,
         command,
         frame,
-        *,
-        ai_adapter,
+        result,
     ):
+        observed["db"] = db
+        observed["device"] = device
+        observed["command"] = command
         observed["frame"] = frame
-        observed["ai_adapter"] = ai_adapter
+        observed["result"] = result
 
-        command.command_status = CommandStatus.completed.value
+        command.command_status = (
+            CommandStatus.completed.value
+        )
+
         command.result_detection_id = (
             "50000000-0000-0000-0000-000000000001"
         )
@@ -380,41 +424,80 @@ def test_submit_manual_detection_image(
         fake_execute,
     )
 
-    try:
-        response = client.post(
-            (
-                f"/api/v1/hardware/devices/{DEVICE_ID}"
-                f"/commands/{COMMAND_1_ID}/detection"
+    response = client.post(
+        (
+            f"/api/v1/hardware/devices/{DEVICE_ID}"
+            f"/commands/{COMMAND_1_ID}/detection"
+        ),
+        headers=hardware_headers(),
+        data={
+            "result_json": (
+                '{"mode":"caged",'
+                '"total_count":1,'
+                '"high_count":1,'
+                '"low_count":0,'
+                '"ratio_normal":1.0,'
+                '"instances":['
+                '{'
+                '"label":"normal",'
+                '"prob_normal":0.9,'
+                '"bbox":{'
+                '"x1":1,'
+                '"y1":1,'
+                '"x2":10,'
+                '"y2":10'
+                '}'
+                '}'
+                ']'
+                '}'
             ),
-            headers=hardware_headers(),
-            files={
-                "file": (
-                    "capture.jpg",
-                    b"fake-jpeg-bytes",
-                    "image/jpeg",
-                )
-            },
-        )
-    finally:
-        app.dependency_overrides.pop(
-            get_ai_adapter,
-            None,
-        )
+        },
+        files={
+            "file": (
+                "capture.jpg",
+                b"fake-jpeg-bytes",
+                "image/jpeg",
+            )
+        },
+    )
 
     assert response.status_code == 200
 
     data = response.json()["data"]
 
     assert data["command_status"] == "completed"
+
     assert (
         data["result_detection_id"]
         == "50000000-0000-0000-0000-000000000001"
     )
 
-    assert observed["frame"].content == b"fake-jpeg-bytes"
-    assert observed["frame"].filename == "capture.jpg"
-    assert observed["frame"].content_type == "image/jpeg"
-    assert observed["ai_adapter"] is fake_ai
+    assert (
+        observed["frame"].content
+        == b"fake-jpeg-bytes"
+    )
+
+    assert (
+        observed["frame"].filename
+        == "capture.jpg"
+    )
+
+    assert (
+        observed["frame"].content_type
+        == "image/jpeg"
+    )
+
+    # The Backend receives the already-computed Pi result.
+    assert observed["result"].total_count == 1
+    assert observed["result"].normal_count == 1
+    assert observed["result"].low_count == 0
+
+    assert len(observed["result"].detections) == 1
+
+    assert (
+        observed["result"].detections[0]["label"]
+        == "normal"
+    )
 
 
 def test_submit_detection_rejects_non_image(
@@ -435,6 +518,16 @@ def test_submit_detection_rejects_non_image(
             f"/commands/{COMMAND_1_ID}/detection"
         ),
         headers=hardware_headers(),
+        data={
+            "result_json": (
+                '{"mode":"caged",'
+                '"total_count":0,'
+                '"high_count":0,'
+                '"low_count":0,'
+                '"instances":[]'
+                '}'
+            ),
+        },
         files={
             "file": (
                 "not-image.txt",

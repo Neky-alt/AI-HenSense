@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.enums import CommandStatus, CommandType, TriggerType
 from app.models import Device, DeviceCommand
-from app.services.ai_adapter import AIAdapter
+from app.services.ai_adapter import AIInferenceResult
 from app.services.capture_adapter import CapturedFrame
 from app.services.detection_pipeline import record_detection_failure
 from app.services.hardware_commands import complete_command, fail_command
@@ -16,10 +16,9 @@ def execute_manual_detection_command(
     device: Device,
     command: DeviceCommand,
     frame: CapturedFrame,
-    *,
-    ai_adapter: AIAdapter,
+    result: AIInferenceResult,
 ) -> DeviceCommand:
-    """Process one claimed manual-detection command."""
+    """Persist one manual-detection result produced locally by the hardware."""
 
     if command.device_id != device.device_id:
         raise ValueError("Command does not belong to device")
@@ -31,8 +30,6 @@ def execute_manual_detection_command(
         raise ValueError("Command is not running")
 
     try:
-        result = ai_adapter.infer(device, frame)
-
         detection = persist_inference_media(
             db,
             device,
@@ -40,7 +37,7 @@ def execute_manual_detection_command(
             result,
             trigger_type=TriggerType.manual,
             provenance={
-                "origin": "hardware_command",
+                "origin": "pi_local_inference",
                 "command_id": command.command_id,
             },
         )
