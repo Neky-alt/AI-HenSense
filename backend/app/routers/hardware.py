@@ -1,5 +1,6 @@
 """Internal Raspberry Pi / hardware integration routes."""
 
+from app.services.hardware_config import get_device_monitoring_config
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -78,6 +79,26 @@ def device_heartbeat(
         }
     )
 
+@router.get(
+    "/devices/{device_id}/monitoring-config",
+    summary="Read device monitoring configuration",
+)
+def read_device_monitoring_config(
+    device_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_hardware_key),
+) -> dict:
+    device = db.get(Device, device_id)
+
+    if device is None or not device.is_active:
+        raise HTTPException(
+            status_code=404,
+            detail="Device not found",
+        )
+
+    return success(
+        get_device_monitoring_config(db, device)
+    )
 
 @router.post(
     "/devices/{device_id}/commands/claim",
