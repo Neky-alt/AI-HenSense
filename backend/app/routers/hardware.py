@@ -1,7 +1,6 @@
 """Internal Raspberry Pi / hardware integration routes."""
 
 import json
-from app.services.hardware_config import get_device_monitoring_config
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -9,20 +8,25 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.enums import FarmingType, TriggerType
 from app.hardware_auth import require_hardware_key
 from app.models import Device, DeviceCommand, utcnow
 from app.responses import success
+from app.services.ai_adapter import AIInvalidResponse, normalize_ai_payload
+from app.services.capture_adapter import CapturedFrame
 from app.services.core_data import compute_device_status, utc_iso
+from app.services.free_range_accumulator import free_range_accumulator
+from app.services.hardware_command_execution import (
+    execute_manual_detection_command,
+)
 from app.services.hardware_commands import (
     claim_next_command,
     complete_command,
     fail_command,
 )
-from app.services.ai_adapter import AIInvalidResponse, normalize_ai_payload
-from app.services.capture_adapter import CapturedFrame
-from app.services.hardware_command_execution import (
-    execute_manual_detection_command,
-)
+from app.services.hardware_config import get_device_monitoring_config
+from app.services.inference_media import persist_inference_media
+from app.services.monitoring_schedule import evaluate_device_schedule
 
 router = APIRouter(
     prefix="/hardware",
@@ -35,10 +39,15 @@ class CommandCompletePayload(BaseModel):
 
 
 class CommandFailPayload(BaseModel):
-    error_message: str = Field(min_length=1, max_length=1000)
+    error_message: str = Field(
+        min_length=1,
+        max_length=1000,
+    )
 
 
-def _serialize_command(command: DeviceCommand) -> dict:
+def _serialize_command(
+    command: DeviceCommand,
+) -> dict:
     return {
         "command_id": command.command_id,
         "device_id": command.device_id,
@@ -51,116 +60,14 @@ def _serialize_command(command: DeviceCommand) -> dict:
     }
 
 
-@router.post(
-    "/devices/{device_id}/heartbeat",
-    summary="Receive device heartbeat",
-)
-def device_heartbeat(
-    device_id: str,
-    db: Session = Depends(get_db),
-    _: None = Depends(require_hardware_key),
-) -> dict:
-    """Mark an active Raspberry Pi device as recently seen."""
-
-    device = db.get(Device, device_id)
-
-    if device is None or not device.is_active:
-        raise HTTPException(
-            status_code=404,
-            detail="Device not found",
-        )
-
-    # Backend time is authoritative.
-    # Do not trust a timestamp supplied by the hardware client.
-    device.last_seen_at = utcnow()
-
-    db.commit()
-    db.refresh(device)
-
-    return success(
-        {
-            "device_id": device.device_id,
-            "device_code": device.device_code,
-            "last_seen_at": utc_iso(device.last_seen_at),
-            "device_status": compute_device_status(device).value,
-        }
-    )
-
-@router.get(
-    "/devices/{device_id}/monitoring-config",
-    summary="Read device monitoring configuration",
-)
-def read_device_monitoring_config(
-    device_id: str,
-    db: Session = Depends(get_db),
-    _: None = Depends(require_hardware_key),
-) -> dict:
-    device = db.get(Device, device_id)
-
-    if device is None or not device.is_active:
-        raise HTTPException(
-            status_code=404,
-            detail="Device not found",
-        )
-
-    return success(
-        get_device_monitoring_config(db, device)
-    )
-
-@router.post(
-    "/devices/{device_id}/commands/claim",
-    summary="Claim next pending device command",
-)
-def claim_device_command(
-    device_id: str,
-    db: Session = Depends(get_db),
-    _: None = Depends(require_hardware_key),
-) -> dict:
-    """Claim the oldest pending command for one active device."""
-
-    device = db.get(Device, device_id)
-
-    if device is None or not device.is_active:
-        raise HTTPException(
-            status_code=404,
-            detail="Device not found",
-        )
-
-    command = claim_next_command(db, device)
-
-    return success(
-        None if command is None else _serialize_command(command)
-    )
-
-@router.post(
-    "/devices/{device_id}/commands/{command_id}/detection",
-    summary="Submit locally inferred manual detection result",
-)
-async def submit_manual_detection(
-    device_id: str,
-    command_id: str,
-    result_json: str = Form(...),
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    _: None = Depends(require_hardware_key),
-) -> dict:
-    """Receive an image and inference result produced locally by the Raspberry Pi."""
-
-    device = db.get(Device, device_id)
-
-    if device is None or not device.is_active:
-        raise HTTPException(
-            status_code=404,
-            detail="Device not found",
-        )
-
-    command = db.get(DeviceCommand, command_id)
-
-    if command is None or command.device_id != device.device_id:
-        raise HTTPException(
-            status_code=404,
-            detail="Command not found",
-        )
+async def _read_inference_upload(
+    file: UploadFile,
+    result_json: str,
+    *,
+    expected_mode: str,
+    fallback_filename: str,
+) -> tuple[CapturedFrame, object]:
+    """Validate one Pi image + locally inferred result."""
 
     if file.content_type not in {
         "image/jpeg",
@@ -190,7 +97,7 @@ async def submit_manual_detection(
     try:
         result = normalize_ai_payload(
             payload,
-            expected_mode=device.farming_type,
+            expected_mode=expected_mode,
         )
     except AIInvalidResponse as exc:
         raise HTTPException(
@@ -201,7 +108,7 @@ async def submit_manual_detection(
     filename = (
         Path(file.filename).name
         if file.filename
-        else f"{command_id}.jpg"
+        else fallback_filename
     )
 
     frame = CapturedFrame(
@@ -209,6 +116,209 @@ async def submit_manual_detection(
         filename=filename,
         content_type=file.content_type,
         captured_at=utcnow(),
+    )
+
+    return frame, result
+
+
+@router.post(
+    "/devices/{device_id}/heartbeat",
+    summary="Receive device heartbeat",
+)
+def device_heartbeat(
+    device_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_hardware_key),
+) -> dict:
+    """Mark an active Raspberry Pi device as recently seen."""
+
+    device = db.get(
+        Device,
+        device_id,
+    )
+
+    if device is None or not device.is_active:
+        raise HTTPException(
+            status_code=404,
+            detail="Device not found",
+        )
+
+    # Backend time is authoritative.
+    # Do not trust a timestamp supplied by the hardware client.
+    device.last_seen_at = utcnow()
+
+    db.commit()
+    db.refresh(device)
+
+    return success(
+        {
+            "device_id": device.device_id,
+            "device_code": device.device_code,
+            "last_seen_at": utc_iso(
+                device.last_seen_at
+            ),
+            "device_status": compute_device_status(
+                device
+            ).value,
+        }
+    )
+
+
+@router.get(
+    "/devices/{device_id}/monitoring-config",
+    summary="Read device monitoring configuration",
+)
+def read_device_monitoring_config(
+    device_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_hardware_key),
+) -> dict:
+    device = db.get(
+        Device,
+        device_id,
+    )
+
+    if device is None or not device.is_active:
+        raise HTTPException(
+            status_code=404,
+            detail="Device not found",
+        )
+
+    return success(
+        get_device_monitoring_config(
+            db,
+            device,
+        )
+    )
+
+@router.get(
+    "/devices/{device_id}/monitoring-due",
+    summary="Check whether automatic monitoring is due",
+)
+def read_device_monitoring_due(
+    device_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_hardware_key),
+) -> dict:
+    """Let the Raspberry Pi ask whether an automatic sample is due."""
+
+    device = db.get(
+        Device,
+        device_id,
+    )
+
+    if device is None or not device.is_active:
+        raise HTTPException(
+            status_code=404,
+            detail="Device not found",
+        )
+
+    decision = evaluate_device_schedule(
+        db,
+        device,
+        now=utcnow(),
+    )
+
+    return success(
+        {
+            "device_id": device.device_id,
+            "farming_type": device.farming_type,
+            "due": decision.due,
+            "reason": decision.reason,
+            "due_at": (
+                decision.due_at.isoformat(
+                    timespec="seconds"
+                )
+                if decision.due_at is not None
+                else None
+            ),
+            "farm_timezone": (
+                device.farm.timezone or "UTC"
+            ),
+        }
+    )
+
+@router.post(
+    "/devices/{device_id}/commands/claim",
+    summary="Claim next pending device command",
+)
+def claim_device_command(
+    device_id: str,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_hardware_key),
+) -> dict:
+    """Claim the oldest pending command for one active device."""
+
+    device = db.get(
+        Device,
+        device_id,
+    )
+
+    if device is None or not device.is_active:
+        raise HTTPException(
+            status_code=404,
+            detail="Device not found",
+        )
+
+    command = claim_next_command(
+        db,
+        device,
+    )
+
+    return success(
+        None
+        if command is None
+        else _serialize_command(command)
+    )
+
+
+@router.post(
+    "/devices/{device_id}/commands/{command_id}/detection",
+    summary="Submit locally inferred manual detection result",
+)
+async def submit_manual_detection(
+    device_id: str,
+    command_id: str,
+    result_json: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_hardware_key),
+) -> dict:
+    """
+    Receive an image and manual inference result produced
+    locally by the Raspberry Pi.
+    """
+
+    device = db.get(
+        Device,
+        device_id,
+    )
+
+    if device is None or not device.is_active:
+        raise HTTPException(
+            status_code=404,
+            detail="Device not found",
+        )
+
+    command = db.get(
+        DeviceCommand,
+        command_id,
+    )
+
+    if (
+        command is None
+        or command.device_id != device.device_id
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Command not found",
+        )
+
+    frame, result = await _read_inference_upload(
+        file,
+        result_json,
+        expected_mode=device.farming_type,
+        fallback_filename=f"{command_id}.jpg",
     )
 
     try:
@@ -229,12 +339,137 @@ async def submit_manual_detection(
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail=f"Command execution failed: {exc}",
+            detail=(
+                f"Command execution failed: {exc}"
+            ),
         ) from exc
 
     return success(
         _serialize_command(completed)
     )
+
+
+@router.post(
+    "/devices/{device_id}/monitoring-samples",
+    summary="Submit locally inferred automatic monitoring sample",
+)
+async def submit_monitoring_sample(
+    device_id: str,
+    result_json: str = Form(...),
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: None = Depends(require_hardware_key),
+) -> dict:
+    """
+    Receive one automatic monitoring sample inferred locally
+    by the Raspberry Pi.
+
+    Caged devices persist one scheduled Detection per sample.
+
+    Free-range devices add the result to the Backend-side
+    accumulation window. A formal free_range_snapshot Detection
+    is created only when the configured snapshot interval is due.
+    """
+
+    device = db.get(
+        Device,
+        device_id,
+    )
+
+    if device is None or not device.is_active:
+        raise HTTPException(
+            status_code=404,
+            detail="Device not found",
+        )
+
+    if device.farming_type not in {
+        FarmingType.caged.value,
+        FarmingType.free_range.value,
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported farming type",
+        )
+
+    frame, result = await _read_inference_upload(
+        file,
+        result_json,
+        expected_mode=device.farming_type,
+        fallback_filename="monitoring-sample.jpg",
+    )
+
+    if device.farming_type == FarmingType.caged.value:
+        try:
+            detection = persist_inference_media(
+                db,
+                device,
+                frame,
+                result,
+                trigger_type=TriggerType.scheduled,
+                provenance={
+                    "origin": "pi_local_inference",
+                    "monitoring_mode": "automatic",
+                },
+            )
+
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail=str(exc),
+            ) from exc
+
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Monitoring sample processing "
+                    f"failed: {exc}"
+                ),
+            ) from exc
+
+        return success(
+            {
+                "device_id": device.device_id,
+                "farming_type": device.farming_type,
+                "detection_id": detection.detection_id,
+                "snapshot_created": False,
+            }
+        )
+
+    try:
+        outcome = free_range_accumulator.record_sample(
+            db,
+            device,
+            result,
+            observed_at=frame.captured_at,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Monitoring sample processing "
+                f"failed: {exc}"
+            ),
+        ) from exc
+
+    return success(
+        {
+            "device_id": device.device_id,
+            "farming_type": device.farming_type,
+            "detection_id": outcome.detection_id,
+            "snapshot_created": outcome.snapshot_created,
+        }
+    )
+
 
 @router.post(
     "/devices/{device_id}/commands/{command_id}/complete",
@@ -249,7 +484,10 @@ def complete_device_command(
 ) -> dict:
     """Mark a running command as completed."""
 
-    device = db.get(Device, device_id)
+    device = db.get(
+        Device,
+        device_id,
+    )
 
     if device is None or not device.is_active:
         raise HTTPException(
@@ -257,9 +495,15 @@ def complete_device_command(
             detail="Device not found",
         )
 
-    command = db.get(DeviceCommand, command_id)
+    command = db.get(
+        DeviceCommand,
+        command_id,
+    )
 
-    if command is None or command.device_id != device.device_id:
+    if (
+        command is None
+        or command.device_id != device.device_id
+    ):
         raise HTTPException(
             status_code=404,
             detail="Command not found",
@@ -270,15 +514,20 @@ def complete_device_command(
             db,
             device,
             command,
-            result_detection_id=payload.result_detection_id,
+            result_detection_id=(
+                payload.result_detection_id
+            ),
         )
+
     except ValueError as exc:
         raise HTTPException(
             status_code=409,
             detail=str(exc),
         ) from exc
 
-    return success(_serialize_command(command))
+    return success(
+        _serialize_command(command)
+    )
 
 
 @router.post(
@@ -294,7 +543,10 @@ def fail_device_command(
 ) -> dict:
     """Mark a running command as failed."""
 
-    device = db.get(Device, device_id)
+    device = db.get(
+        Device,
+        device_id,
+    )
 
     if device is None or not device.is_active:
         raise HTTPException(
@@ -302,9 +554,15 @@ def fail_device_command(
             detail="Device not found",
         )
 
-    command = db.get(DeviceCommand, command_id)
+    command = db.get(
+        DeviceCommand,
+        command_id,
+    )
 
-    if command is None or command.device_id != device.device_id:
+    if (
+        command is None
+        or command.device_id != device.device_id
+    ):
         raise HTTPException(
             status_code=404,
             detail="Command not found",
@@ -317,10 +575,13 @@ def fail_device_command(
             command,
             error_message=payload.error_message,
         )
+
     except ValueError as exc:
         raise HTTPException(
             status_code=409,
             detail=str(exc),
         ) from exc
 
-    return success(_serialize_command(command))
+    return success(
+        _serialize_command(command)
+    )

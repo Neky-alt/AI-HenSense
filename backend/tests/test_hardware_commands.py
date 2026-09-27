@@ -2,6 +2,7 @@
 
 from datetime import timedelta
 
+from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
@@ -538,3 +539,246 @@ def test_submit_detection_rejects_non_image(
     )
 
     assert response.status_code == 400
+
+def test_monitoring_due_endpoint(
+    command_api,
+    monkeypatch,
+):
+    client, _ = command_api
+
+    fake_decision = SimpleNamespace(
+        due=True,
+        reason="scheduled_time_due",
+        due_at=None,
+    )
+
+    monkeypatch.setattr(
+        hardware_router,
+        "evaluate_device_schedule",
+        lambda db, device, now: fake_decision,
+    )
+
+    response = client.get(
+        (
+            f"/api/v1/hardware/devices/{DEVICE_ID}"
+            "/monitoring-due"
+        ),
+        headers=hardware_headers(),
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert body["success"] is True
+    assert body["data"]["device_id"] == DEVICE_ID
+    assert body["data"]["farming_type"] == "caged"
+    assert body["data"]["due"] is True
+    assert (
+        body["data"]["reason"]
+        == "scheduled_time_due"
+    )
+
+
+def test_submit_caged_monitoring_sample(
+    command_api,
+    monkeypatch,
+):
+    client, _ = command_api
+
+    observed = {}
+
+    def fake_persist(
+        db,
+        device,
+        frame,
+        result,
+        *,
+        trigger_type,
+        provenance,
+    ):
+        observed["device"] = device
+        observed["frame"] = frame
+        observed["result"] = result
+        observed["trigger_type"] = trigger_type
+        observed["provenance"] = provenance
+
+        return SimpleNamespace(
+            detection_id=(
+                "50000000-0000-0000-0000-000000000010"
+            )
+        )
+
+    monkeypatch.setattr(
+        hardware_router,
+        "persist_inference_media",
+        fake_persist,
+    )
+
+    response = client.post(
+        (
+            f"/api/v1/hardware/devices/{DEVICE_ID}"
+            "/monitoring-samples"
+        ),
+        headers=hardware_headers(),
+        data={
+            "result_json": (
+                '{"mode":"caged",'
+                '"total_count":1,'
+                '"high_count":1,'
+                '"low_count":0,'
+                '"ratio_normal":1.0,'
+                '"instances":['
+                '{'
+                '"label":"normal",'
+                '"prob_normal":0.9,'
+                '"bbox":{'
+                '"x1":1,'
+                '"y1":1,'
+                '"x2":10,'
+                '"y2":10'
+                '}'
+                '}'
+                ']'
+                '}'
+            ),
+        },
+        files={
+            "file": (
+                "monitoring.jpg",
+                b"fake-monitoring-image",
+                "image/jpeg",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert body["success"] is True
+
+    data = body["data"]
+
+    assert data["device_id"] == DEVICE_ID
+    assert data["farming_type"] == "caged"
+    assert (
+        data["detection_id"]
+        == "50000000-0000-0000-0000-000000000010"
+    )
+    assert data["snapshot_created"] is False
+
+    assert (
+        observed["frame"].content
+        == b"fake-monitoring-image"
+    )
+    assert observed["frame"].filename == "monitoring.jpg"
+
+    assert observed["result"].total_count == 1
+    assert observed["result"].normal_count == 1
+    assert observed["result"].low_count == 0
+
+    assert observed["trigger_type"].value == "scheduled"
+
+    assert (
+        observed["provenance"]["origin"]
+        == "pi_local_inference"
+    )
+    assert (
+        observed["provenance"]["monitoring_mode"]
+        == "automatic"
+    )
+
+
+def test_submit_free_range_monitoring_sample(
+    command_api,
+    monkeypatch,
+):
+    client, TestSession = command_api
+
+    with TestSession() as db:
+        device = db.get(
+            Device,
+            DEVICE_ID,
+        )
+
+        device.farming_type = "free_range"
+        db.commit()
+
+    observed = {}
+
+    def fake_record_sample(
+        db,
+        device,
+        result,
+        *,
+        observed_at,
+    ):
+        observed["device"] = device
+        observed["result"] = result
+        observed["observed_at"] = observed_at
+
+        return SimpleNamespace(
+            detection_id=None,
+            snapshot_created=False,
+        )
+
+    monkeypatch.setattr(
+        hardware_router.free_range_accumulator,
+        "record_sample",
+        fake_record_sample,
+    )
+
+    response = client.post(
+        (
+            f"/api/v1/hardware/devices/{DEVICE_ID}"
+            "/monitoring-samples"
+        ),
+        headers=hardware_headers(),
+        data={
+            "result_json": (
+                '{"mode":"free_range",'
+                '"total_count":1,'
+                '"high_count":0,'
+                '"low_count":1,'
+                '"ratio_normal":0.0,'
+                '"instances":['
+                '{'
+                '"label":"low_yield",'
+                '"prob_normal":0.1,'
+                '"bbox":{'
+                '"x1":1,'
+                '"y1":1,'
+                '"x2":10,'
+                '"y2":10'
+                '}'
+                '}'
+                ']'
+                '}'
+            ),
+        },
+        files={
+            "file": (
+                "free-range.jpg",
+                b"fake-free-range-image",
+                "image/jpeg",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+
+    body = response.json()
+
+    assert body["success"] is True
+
+    data = body["data"]
+
+    assert data["device_id"] == DEVICE_ID
+    assert data["farming_type"] == "free_range"
+    assert data["detection_id"] is None
+    assert data["snapshot_created"] is False
+
+    assert observed["result"].total_count == 1
+    assert observed["result"].normal_count == 0
+    assert observed["result"].low_count == 1

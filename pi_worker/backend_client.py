@@ -11,11 +11,14 @@ from config import PiWorkerConfig
 
 
 class BackendClientError(RuntimeError):
-    """Raised when the Backend request fails."""
+    """Raised when communication with the Backend fails."""
 
 
 class BackendClient:
-    def __init__(self, config: PiWorkerConfig):
+    def __init__(
+        self,
+        config: PiWorkerConfig,
+    ) -> None:
         self.config = config
 
     @property
@@ -24,40 +27,129 @@ class BackendClient:
             "X-Hardware-Key": self.config.hardware_api_key,
         }
 
-    def _url(self, path: str) -> str:
-        return f"{self.config.backend_base_url}/api/v1{path}"
-
-    def heartbeat(self) -> dict:
-        response = requests.post(
-            self._url(
-                f"/hardware/devices/{self.config.device_id}/heartbeat"
-            ),
-            headers=self._headers,
-            timeout=self.config.request_timeout_seconds,
+    def _url(
+        self,
+        path: str,
+    ) -> str:
+        return (
+            self.config.backend_base_url.rstrip("/")
+            + "/api/v1"
+            + path
         )
+
+    def _read_response(
+        self,
+        response: requests.Response,
+    ) -> dict:
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise BackendClientError(
+                "Backend returned a non-JSON response "
+                f"(HTTP {response.status_code})"
+            ) from exc
+
+        if not response.ok:
+            detail = payload.get("detail")
+
+            if detail is None:
+                detail = payload
+
+            raise BackendClientError(
+                f"Backend request failed "
+                f"(HTTP {response.status_code}): {detail}"
+            )
+
+        if not isinstance(payload, dict):
+            raise BackendClientError(
+                "Backend response must be a JSON object"
+            )
+
+        return payload
+
+    def heartbeat(
+        self,
+    ) -> dict:
+        """Send one device heartbeat."""
+
+        try:
+            response = requests.post(
+                self._url(
+                    f"/hardware/devices/"
+                    f"{self.config.device_id}/heartbeat"
+                ),
+                headers=self._headers,
+                timeout=self.config.request_timeout_seconds,
+            )
+        except requests.RequestException as exc:
+            raise BackendClientError(
+                f"Heartbeat request failed: {exc}"
+            ) from exc
+
         return self._read_response(response)
 
-    def get_monitoring_config(self) -> dict:
-        response = requests.get(
-            self._url(
-                f"/hardware/devices/{self.config.device_id}/monitoring-config"
-            ),
-            headers=self._headers,
-            timeout=self.config.request_timeout_seconds,
-        )
+    def get_monitoring_config(
+        self,
+    ) -> dict:
+        """Read the monitoring configuration for this device."""
+
+        try:
+            response = requests.get(
+                self._url(
+                    f"/hardware/devices/"
+                    f"{self.config.device_id}/monitoring-config"
+                ),
+                headers=self._headers,
+                timeout=self.config.request_timeout_seconds,
+            )
+        except requests.RequestException as exc:
+            raise BackendClientError(
+                f"Monitoring config request failed: {exc}"
+            ) from exc
+
         return self._read_response(response)
 
-    def claim_command(self) -> dict | None:
-        response = requests.post(
-            self._url(
-                f"/hardware/devices/{self.config.device_id}/commands/claim"
-            ),
-            headers=self._headers,
-            timeout=self.config.request_timeout_seconds,
-        )
+    def get_monitoring_due(
+        self,
+    ) -> dict:
+        """Ask whether one automatic monitoring sample is due."""
 
-        payload = self._read_response(response)
-        return payload.get("data")
+        try:
+            response = requests.get(
+                self._url(
+                    f"/hardware/devices/"
+                    f"{self.config.device_id}/monitoring-due"
+                ),
+                headers=self._headers,
+                timeout=self.config.request_timeout_seconds,
+            )
+        except requests.RequestException as exc:
+            raise BackendClientError(
+                f"Monitoring due request failed: {exc}"
+            ) from exc
+
+        return self._read_response(response)
+
+    def claim_command(
+        self,
+    ) -> dict:
+        """Claim the next pending hardware command."""
+
+        try:
+            response = requests.post(
+                self._url(
+                    f"/hardware/devices/"
+                    f"{self.config.device_id}/commands/claim"
+                ),
+                headers=self._headers,
+                timeout=self.config.request_timeout_seconds,
+            )
+        except requests.RequestException as exc:
+            raise BackendClientError(
+                f"Command claim request failed: {exc}"
+            ) from exc
+
+        return self._read_response(response)
 
     def submit_detection_result(
         self,
@@ -65,7 +157,7 @@ class BackendClient:
         image_path: str | Path,
         result: dict,
     ) -> dict:
-        """Upload a locally inferred result and its source image."""
+        """Upload one locally inferred manual detection."""
 
         path = Path(image_path)
 
@@ -92,25 +184,125 @@ class BackendClient:
                 "Detection result is not JSON serializable"
             ) from exc
 
-        with path.open("rb") as image_file:
+        try:
+            with path.open("rb") as image_file:
+                response = requests.post(
+                    self._url(
+                        f"/hardware/devices/"
+                        f"{self.config.device_id}/commands/"
+                        f"{command_id}/detection"
+                    ),
+                    headers=self._headers,
+                    data={
+                        "result_json": result_json,
+                    },
+                    files={
+                        "file": (
+                            path.name,
+                            image_file,
+                            content_type,
+                        ),
+                    },
+                    timeout=self.config.request_timeout_seconds,
+                )
+        except requests.RequestException as exc:
+            raise BackendClientError(
+                f"Detection upload failed: {exc}"
+            ) from exc
+        except OSError as exc:
+            raise BackendClientError(
+                f"Could not read detection image: {exc}"
+            ) from exc
+
+        return self._read_response(response)
+
+    def submit_monitoring_sample(
+        self,
+        image_path: str | Path,
+        result: dict,
+    ) -> dict:
+        """Upload one locally inferred automatic monitoring sample."""
+
+        path = Path(image_path)
+
+        if not path.is_file():
+            raise BackendClientError(
+                f"Monitoring image does not exist: {path}"
+            )
+
+        suffix = path.suffix.lower()
+
+        if suffix in {".jpg", ".jpeg"}:
+            content_type = "image/jpeg"
+        elif suffix == ".png":
+            content_type = "image/png"
+        else:
+            raise BackendClientError(
+                "Monitoring image must be JPEG or PNG"
+            )
+
+        try:
+            result_json = json.dumps(result)
+        except (TypeError, ValueError) as exc:
+            raise BackendClientError(
+                "Monitoring result is not JSON serializable"
+            ) from exc
+
+        try:
+            with path.open("rb") as image_file:
+                response = requests.post(
+                    self._url(
+                        f"/hardware/devices/"
+                        f"{self.config.device_id}/monitoring-samples"
+                    ),
+                    headers=self._headers,
+                    data={
+                        "result_json": result_json,
+                    },
+                    files={
+                        "file": (
+                            path.name,
+                            image_file,
+                            content_type,
+                        ),
+                    },
+                    timeout=self.config.request_timeout_seconds,
+                )
+        except requests.RequestException as exc:
+            raise BackendClientError(
+                f"Monitoring sample upload failed: {exc}"
+            ) from exc
+        except OSError as exc:
+            raise BackendClientError(
+                f"Could not read monitoring image: {exc}"
+            ) from exc
+
+        return self._read_response(response)
+
+    def complete_command(
+        self,
+        command_id: str,
+        result_detection_id: str | None = None,
+    ) -> dict:
+        """Mark one running command as completed."""
+
+        try:
             response = requests.post(
                 self._url(
-                    f"/hardware/devices/{self.config.device_id}"
-                    f"/commands/{command_id}/detection"
+                    f"/hardware/devices/"
+                    f"{self.config.device_id}/commands/"
+                    f"{command_id}/complete"
                 ),
                 headers=self._headers,
-                data={
-                    "result_json": result_json,
-                },
-                files={
-                    "file": (
-                        path.name,
-                        image_file,
-                        content_type,
-                    )
+                json={
+                    "result_detection_id": result_detection_id,
                 },
                 timeout=self.config.request_timeout_seconds,
             )
+        except requests.RequestException as exc:
+            raise BackendClientError(
+                f"Command completion request failed: {exc}"
+            ) from exc
 
         return self._read_response(response)
 
@@ -119,36 +311,24 @@ class BackendClient:
         command_id: str,
         error_message: str,
     ) -> dict:
-        """Mark a running hardware command as failed."""
+        """Mark one running command as failed."""
 
-        response = requests.post(
-            self._url(
-                f"/hardware/devices/{self.config.device_id}"
-                f"/commands/{command_id}/fail"
-            ),
-            headers=self._headers,
-            json={
-                "error_message": error_message,
-            },
-            timeout=self.config.request_timeout_seconds,
-        )
-
-        return self._read_response(response)
-
-    @staticmethod
-    def _read_response(response: requests.Response) -> dict:
         try:
-            payload = response.json()
-        except ValueError as exc:
+            response = requests.post(
+                self._url(
+                    f"/hardware/devices/"
+                    f"{self.config.device_id}/commands/"
+                    f"{command_id}/fail"
+                ),
+                headers=self._headers,
+                json={
+                    "error_message": error_message,
+                },
+                timeout=self.config.request_timeout_seconds,
+            )
+        except requests.RequestException as exc:
             raise BackendClientError(
-                f"Backend returned invalid JSON "
-                f"(HTTP {response.status_code})"
+                f"Command failure request failed: {exc}"
             ) from exc
 
-        if not response.ok:
-            raise BackendClientError(
-                f"Backend request failed "
-                f"({response.status_code}): {payload}"
-            )
-
-        return payload
+        return self._read_response(response)

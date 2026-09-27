@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import time
+
 from backend_client import BackendClient, BackendClientError
 from camera import CameraError, capture_image
-from config import load_config
+from config import PiWorkerConfig, load_config
 from inference import LocalInferenceEngine, LocalInferenceError
 
 
@@ -83,6 +85,59 @@ def handle_manual_detection(
 
         raise
 
+def run_automatic_monitoring_sample(
+    client: BackendClient,
+    farming_type: str,
+) -> None:
+    """Capture, infer, and upload one automatic monitoring sample."""
+
+    print(
+        f"[Pi Worker] Running automatic monitoring sample "
+        f"({farming_type})..."
+    )
+
+    print(
+        f"[Pi Worker] Loading local inference "
+        f"engine ({farming_type})..."
+    )
+
+    engine = LocalInferenceEngine(
+        farming_type
+    )
+    engine.load()
+
+    print(
+        "[Pi Worker] Capturing monitoring image..."
+    )
+
+    image_path = capture_image()
+
+    print(
+        "[Pi Worker] Running local inference..."
+    )
+
+    result = engine.predict(
+        image_path
+    )
+
+    print(
+        "[Pi Worker] Monitoring inference result:",
+        result,
+    )
+
+    print(
+        "[Pi Worker] Uploading monitoring sample..."
+    )
+
+    response = client.submit_monitoring_sample(
+        image_path,
+        result,
+    )
+
+    print(
+        "[Pi Worker] Monitoring sample accepted:",
+        response,
+    )
 
 def handle_command(
     client: BackendClient,
@@ -124,8 +179,71 @@ def handle_command(
     raise RuntimeError(message)
 
 
-def run_once() -> None:
-    """Run one Backend communication cycle."""
+def run_cycle(
+    client: BackendClient,
+    config: PiWorkerConfig,
+) -> None:
+    """Run one Pi Worker polling cycle."""
+
+    print("[Pi Worker] Sending heartbeat...")
+    client.heartbeat()
+
+    monitoring_response = client.get_monitoring_config()
+    monitoring_data = monitoring_response.get("data") or {}
+
+    farming_type = monitoring_data.get("farming_type")
+
+    if farming_type not in {
+        "caged",
+        "free_range",
+    }:
+        raise RuntimeError(
+            f"Unsupported farming type: {farming_type}"
+        )
+
+    # Manual commands have priority over automatic monitoring.
+    command_response = client.claim_command()
+    command = command_response.get("data")
+
+    if command is not None:
+        print(
+            "[Pi Worker] Claimed command:",
+            command.get("command_id"),
+        )
+
+        handle_command(
+            client,
+            command,
+            farming_type,
+        )
+        return
+
+    # No manual command is waiting. Ask Backend whether an
+    # automatic monitoring sample is currently due.
+    due_response = client.get_monitoring_due()
+    due_data = due_response.get("data") or {}
+
+    if not due_data.get("due", False):
+        print(
+            "[Pi Worker] No automatic monitoring due:",
+            due_data.get("reason"),
+        )
+        return
+
+    print(
+        "[Pi Worker] Automatic monitoring is due:",
+        due_data.get("reason"),
+        "due_at=",
+        due_data.get("due_at"),
+    )
+
+    run_automatic_monitoring_sample(
+        client,
+        farming_type,
+    )
+
+def run_forever() -> None:
+    """Continuously poll the Backend for hardware work."""
 
     config = load_config()
     client = BackendClient(config)
@@ -135,93 +253,51 @@ def run_once() -> None:
         f"{config.device_id}"
     )
 
-    print("[Pi Worker] Sending heartbeat...")
-
-    heartbeat = client.heartbeat()
-
     print(
-        "[Pi Worker] Heartbeat OK:",
-        heartbeat,
+        f"[Pi Worker] Poll interval: "
+        f"{config.poll_interval_seconds} seconds"
     )
 
-    print(
-        "[Pi Worker] Loading monitoring config..."
-    )
+    while True:
+        try:
+            run_cycle(
+                client,
+                config,
+            )
 
-    monitoring_response = (
-        client.get_monitoring_config()
-    )
+        except BackendClientError as exc:
+            print(
+                f"[Pi Worker] Backend error: {exc}"
+            )
 
-    print(
-        "[Pi Worker] Monitoring config:",
-        monitoring_response,
-    )
+        except CameraError as exc:
+            print(
+                f"[Pi Worker] Camera error: {exc}"
+            )
 
-    monitoring_config = (
-        monitoring_response.get("data")
-        or {}
-    )
+        except LocalInferenceError as exc:
+            print(
+                f"[Pi Worker] Inference error: {exc}"
+            )
 
-    farming_type = monitoring_config.get(
-        "farming_type"
-    )
+        except RuntimeError as exc:
+            print(
+                f"[Pi Worker] Worker error: {exc}"
+            )
 
-    if farming_type not in {
-        "caged",
-        "free_range",
-    }:
-        raise RuntimeError(
-            "Backend returned invalid farming_type: "
-            f"{farming_type}"
-        )
-
-    print(
-        "[Pi Worker] Checking for command..."
-    )
-
-    command = client.claim_command()
-
-    if command is None:
         print(
-            "[Pi Worker] No pending command."
+            f"[Pi Worker] Waiting "
+            f"{config.poll_interval_seconds} seconds..."
         )
-        return
 
-    print(
-        "[Pi Worker] Claimed command:",
-        command,
-    )
-
-    handle_command(
-        client,
-        command,
-        farming_type,
-    )
+        time.sleep(
+            config.poll_interval_seconds
+        )
 
 
 def main() -> None:
     try:
-        run_once()
-
-    except BackendClientError as exc:
-        print(
-            f"[Pi Worker] Backend error: {exc}"
-        )
-
-    except CameraError as exc:
-        print(
-            f"[Pi Worker] Camera error: {exc}"
-        )
-
-    except LocalInferenceError as exc:
-        print(
-            f"[Pi Worker] Inference error: {exc}"
-        )
-
-    except RuntimeError as exc:
-        print(
-            f"[Pi Worker] Worker error: {exc}"
-        )
+        run_forever()
 
     except KeyboardInterrupt:
         print(

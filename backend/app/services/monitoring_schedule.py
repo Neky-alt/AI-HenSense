@@ -7,7 +7,8 @@ It does not start background threads and it does not access camera hardware.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -208,6 +209,29 @@ def evaluate_cage_schedule(
         reason="unsupported_detection_mode",
     )
 
+def _utc_naive_to_farm_local(
+    value: datetime,
+    timezone_name: str,
+) -> datetime:
+    """Convert a naive UTC database timestamp to naive farm-local time."""
+
+    utc_value = value
+
+    if utc_value.tzinfo is None:
+        utc_value = utc_value.replace(
+            tzinfo=timezone.utc
+        )
+    else:
+        utc_value = utc_value.astimezone(
+            timezone.utc
+        )
+
+    return (
+        utc_value.astimezone(
+            ZoneInfo(timezone_name)
+        )
+        .replace(tzinfo=None)
+    )
 
 def get_last_scheduled_detection_at(
     db: Session,
@@ -234,13 +258,14 @@ def evaluate_device_schedule(
     *,
     now: datetime,
 ) -> ScheduleDecision:
-    """Evaluate one device using its persisted monitoring configuration."""
+    """Evaluate one device using farm-local monitoring time."""
 
-    config = get_device_monitoring_config(db, device)
+    config = get_device_monitoring_config(
+        db,
+        device,
+    )
 
     if device.farming_type == FarmingType.free_range.value:
-        # Current formal settings define the snapshot interval, but not how
-        # frequently individual Free-range camera samples should be captured.
         return ScheduleDecision(
             due=False,
             reason="free_range_sampling_interval_not_configured",
@@ -252,13 +277,42 @@ def evaluate_device_schedule(
             reason="unsupported_farming_type",
         )
 
+    timezone_name = device.farm.timezone or "UTC"
+
+    try:
+        local_now = _utc_naive_to_farm_local(
+            now,
+            timezone_name,
+        )
+    except ZoneInfoNotFoundError:
+        return ScheduleDecision(
+            due=False,
+            reason="invalid_farm_timezone",
+        )
+
     last_scheduled_at = get_last_scheduled_detection_at(
         db,
         device,
     )
 
+    local_last_scheduled_at = None
+
+    if last_scheduled_at is not None:
+        try:
+            local_last_scheduled_at = (
+                _utc_naive_to_farm_local(
+                    last_scheduled_at,
+                    timezone_name,
+                )
+            )
+        except ZoneInfoNotFoundError:
+            return ScheduleDecision(
+                due=False,
+                reason="invalid_farm_timezone",
+            )
+
     return evaluate_cage_schedule(
         config,
-        now=now,
-        last_scheduled_at=last_scheduled_at,
+        now=local_now,
+        last_scheduled_at=local_last_scheduled_at,
     )
