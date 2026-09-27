@@ -1,7 +1,9 @@
 """Internal Raspberry Pi / hardware integration routes."""
 
 from app.services.hardware_config import get_device_monitoring_config
-from fastapi import APIRouter, Depends, HTTPException
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -15,7 +17,11 @@ from app.services.hardware_commands import (
     complete_command,
     fail_command,
 )
-
+from app.services.ai_adapter import AIAdapter, get_ai_adapter
+from app.services.capture_adapter import CapturedFrame
+from app.services.hardware_command_execution import (
+    execute_manual_detection_command,
+)
 
 router = APIRouter(
     prefix="/hardware",
@@ -125,6 +131,88 @@ def claim_device_command(
         None if command is None else _serialize_command(command)
     )
 
+@router.post(
+    "/devices/{device_id}/commands/{command_id}/detection",
+    summary="Submit image for a manual detection command",
+)
+async def submit_manual_detection(
+    device_id: str,
+    command_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    ai_adapter: AIAdapter = Depends(get_ai_adapter),
+    _: None = Depends(require_hardware_key),
+) -> dict:
+    device = db.get(Device, device_id)
+
+    if device is None or not device.is_active:
+        raise HTTPException(
+            status_code=404,
+            detail="Device not found",
+        )
+
+    command = db.get(DeviceCommand, command_id)
+
+    if command is None or command.device_id != device.device_id:
+        raise HTTPException(
+            status_code=404,
+            detail="Command not found",
+        )
+
+    if file.content_type not in {
+        "image/jpeg",
+        "image/png",
+    }:
+        raise HTTPException(
+            status_code=400,
+            detail="Only JPEG and PNG images are supported",
+        )
+
+    content = await file.read()
+
+    if not content:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded image is empty",
+        )
+
+    filename = (
+        Path(file.filename).name
+        if file.filename
+        else f"{command_id}.jpg"
+    )
+
+    frame = CapturedFrame(
+        content=content,
+        filename=filename,
+        content_type=file.content_type,
+        captured_at=utcnow(),
+    )
+
+    try:
+        completed = execute_manual_detection_command(
+            db,
+            device,
+            command,
+            frame,
+            ai_adapter=ai_adapter,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Command execution failed: {exc}",
+        ) from exc
+
+    return success(
+        _serialize_command(completed)
+    )
 
 @router.post(
     "/devices/{device_id}/commands/{command_id}/complete",

@@ -13,7 +13,10 @@ from app.database import Base, get_db
 from app.enums import CommandStatus, CommandType
 from app.main import app
 from app.models import Device, DeviceCommand, Farm, Profile, utcnow
+from types import SimpleNamespace
 
+from app.services.ai_adapter import get_ai_adapter
+import app.routers.hardware as hardware_router
 
 DEVICE_ID = "20000000-0000-0000-0000-000000000001"
 INACTIVE_DEVICE_ID = "20000000-0000-0000-0000-000000000099"
@@ -328,3 +331,117 @@ def test_inactive_device_cannot_claim_command(command_api):
     )
 
     assert response.status_code == 404
+
+def test_submit_manual_detection_image(
+    command_api,
+    monkeypatch,
+):
+    client, _ = command_api
+
+    # First claim the command so that it is running.
+    claimed = client.post(
+        claim_url(),
+        headers=hardware_headers(),
+    )
+
+    assert claimed.status_code == 200
+    assert (
+        claimed.json()["data"]["command_status"]
+        == CommandStatus.running.value
+    )
+
+    fake_ai = object()
+
+    app.dependency_overrides[get_ai_adapter] = lambda: fake_ai
+
+    observed = {}
+
+    def fake_execute(
+        db,
+        device,
+        command,
+        frame,
+        *,
+        ai_adapter,
+    ):
+        observed["frame"] = frame
+        observed["ai_adapter"] = ai_adapter
+
+        command.command_status = CommandStatus.completed.value
+        command.result_detection_id = (
+            "50000000-0000-0000-0000-000000000001"
+        )
+
+        return command
+
+    monkeypatch.setattr(
+        hardware_router,
+        "execute_manual_detection_command",
+        fake_execute,
+    )
+
+    try:
+        response = client.post(
+            (
+                f"/api/v1/hardware/devices/{DEVICE_ID}"
+                f"/commands/{COMMAND_1_ID}/detection"
+            ),
+            headers=hardware_headers(),
+            files={
+                "file": (
+                    "capture.jpg",
+                    b"fake-jpeg-bytes",
+                    "image/jpeg",
+                )
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(
+            get_ai_adapter,
+            None,
+        )
+
+    assert response.status_code == 200
+
+    data = response.json()["data"]
+
+    assert data["command_status"] == "completed"
+    assert (
+        data["result_detection_id"]
+        == "50000000-0000-0000-0000-000000000001"
+    )
+
+    assert observed["frame"].content == b"fake-jpeg-bytes"
+    assert observed["frame"].filename == "capture.jpg"
+    assert observed["frame"].content_type == "image/jpeg"
+    assert observed["ai_adapter"] is fake_ai
+
+
+def test_submit_detection_rejects_non_image(
+    command_api,
+):
+    client, _ = command_api
+
+    claimed = client.post(
+        claim_url(),
+        headers=hardware_headers(),
+    )
+
+    assert claimed.status_code == 200
+
+    response = client.post(
+        (
+            f"/api/v1/hardware/devices/{DEVICE_ID}"
+            f"/commands/{COMMAND_1_ID}/detection"
+        ),
+        headers=hardware_headers(),
+        files={
+            "file": (
+                "not-image.txt",
+                b"hello",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 400
