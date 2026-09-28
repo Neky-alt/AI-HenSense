@@ -342,15 +342,9 @@ def evaluate_device_schedule(
         )
 
     if device.farming_type == FarmingType.free_range.value:
-        accumulator_window = free_range_accumulator.get_window(
+        last_sample_at = free_range_accumulator.get_last_sample_at(
             device.device_id
-        )
-
-        last_sample_at = (
-            accumulator_window.last_sample_at
-            if accumulator_window is not None
-            else None
-        )
+)
 
         local_last_sample_at = None
 

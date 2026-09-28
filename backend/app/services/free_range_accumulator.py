@@ -52,18 +52,25 @@ class FreeRangeSampleOutcome:
 class FreeRangeAccumulator:
     def __init__(self):
         self._windows: dict[str, FreeRangeWindow] = {}
+        self._last_sample_at: dict[str, datetime] = {}
         self._lock = Lock()
 
     def reset(self, device_id: str | None = None) -> None:
         with self._lock:
             if device_id is None:
                 self._windows.clear()
+                self._last_sample_at.clear()
             else:
                 self._windows.pop(device_id, None)
+                self._last_sample_at.pop(device_id, None)
 
     def get_window(self, device_id: str) -> FreeRangeWindow | None:
         with self._lock:
             return self._windows.get(device_id)
+
+    def get_last_sample_at(self, device_id: str) -> datetime | None:
+        with self._lock:
+            return self._last_sample_at.get(device_id)
 
     def _snapshot_interval_minutes(self, db: Session, device: Device) -> int:
         row = db.scalar(
@@ -104,6 +111,7 @@ class FreeRangeAccumulator:
             window.low_count += result.low_count
             window.sample_calls += 1
             window.last_sample_at = now
+            self._last_sample_at[device.device_id] = now
 
             due = force_snapshot or (now - window.started_at >= interval)
             if not due:
