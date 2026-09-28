@@ -2,7 +2,10 @@
 
 from datetime import datetime, timedelta
 
-from app.services.monitoring_schedule import evaluate_cage_schedule
+from app.services.monitoring_schedule import (
+    evaluate_cage_schedule,
+    evaluate_free_range_schedule,
+)
 
 
 def config(**overrides):
@@ -113,3 +116,92 @@ def test_overnight_window_supported():
 
     assert decision.due is True
     assert decision.due_at == datetime(2026, 9, 28, 0, 50)
+
+def free_range_config(**overrides):
+    value = {
+        "monitoring_enabled": True,
+        "monitoring_start_time": "08:00",
+        "monitoring_end_time": "18:00",
+        "result_snapshot_interval_minutes": 5,
+    }
+
+    value.update(overrides)
+    return value
+
+    value.update(overrides)
+    return value
+
+
+def test_free_range_first_sample_is_due():
+    decision = evaluate_free_range_schedule(
+        free_range_config(),
+        now=datetime(2026, 9, 27, 8, 5),
+        last_sample_at=None,
+        sampling_interval_seconds=60,
+    )
+
+    assert decision.due is True
+    assert decision.reason == "free_range_sampling_due"
+    assert decision.due_at == datetime(2026, 9, 27, 8, 0)
+
+
+def test_free_range_not_due_before_sampling_interval_elapsed():
+    decision = evaluate_free_range_schedule(
+        free_range_config(),
+        now=datetime(2026, 9, 27, 10, 0, 30),
+        last_sample_at=datetime(2026, 9, 27, 10, 0),
+        sampling_interval_seconds=60,
+    )
+
+    assert decision.due is False
+    assert decision.reason == "free_range_sampling_not_due"
+    assert decision.due_at == datetime(2026, 9, 27, 10, 1)
+
+
+def test_free_range_due_after_sampling_interval_elapsed():
+    decision = evaluate_free_range_schedule(
+        free_range_config(),
+        now=datetime(2026, 9, 27, 10, 1),
+        last_sample_at=datetime(2026, 9, 27, 10, 0),
+        sampling_interval_seconds=60,
+    )
+
+    assert decision.due is True
+    assert decision.reason == "free_range_sampling_due"
+    assert decision.due_at == datetime(2026, 9, 27, 10, 1)
+
+
+def test_free_range_outside_window_is_not_due():
+    decision = evaluate_free_range_schedule(
+        free_range_config(),
+        now=datetime(2026, 9, 27, 19, 0),
+        last_sample_at=None,
+        sampling_interval_seconds=60,
+    )
+
+    assert decision.due is False
+    assert decision.reason == "outside_monitoring_window"
+
+
+def test_snapshot_interval_does_not_change_sampling_interval():
+    five_min_snapshot = evaluate_free_range_schedule(
+        free_range_config(
+            result_snapshot_interval_minutes=5,
+        ),
+        now=datetime(2026, 9, 27, 10, 0, 30),
+        last_sample_at=datetime(2026, 9, 27, 10, 0),
+        sampling_interval_seconds=60,
+    )
+
+    ten_min_snapshot = evaluate_free_range_schedule(
+        free_range_config(
+            result_snapshot_interval_minutes=10,
+        ),
+        now=datetime(2026, 9, 27, 10, 0, 30),
+        last_sample_at=datetime(2026, 9, 27, 10, 0),
+        sampling_interval_seconds=60,
+    )
+
+    assert five_min_snapshot.due is False
+    assert ten_min_snapshot.due is False
+    assert five_min_snapshot.due_at == ten_min_snapshot.due_at

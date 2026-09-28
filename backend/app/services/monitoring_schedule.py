@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 from app.enums import FarmingType, TriggerType
 from app.models import Detection, Device
 from app.services.hardware_config import get_device_monitoring_config
-
+from app.config import settings
+from app.services.free_range_accumulator import free_range_accumulator
 
 @dataclass(frozen=True)
 class ScheduleDecision:
@@ -209,6 +210,69 @@ def evaluate_cage_schedule(
         reason="unsupported_detection_mode",
     )
 
+def evaluate_free_range_schedule(
+    config: dict,
+    *,
+    now: datetime,
+    last_sample_at: datetime | None,
+    sampling_interval_seconds: int,
+) -> ScheduleDecision:
+    """Evaluate whether one Free-range camera sample is currently due."""
+
+    if not config.get("monitoring_enabled", False):
+        return ScheduleDecision(
+            due=False,
+            reason="monitoring_disabled",
+        )
+
+    window = _active_window(
+        now,
+        config.get("monitoring_start_time"),
+        config.get("monitoring_end_time"),
+    )
+
+    if window is None:
+        return ScheduleDecision(
+            due=False,
+            reason="outside_monitoring_window",
+        )
+
+    window_start, window_end = window
+
+    if sampling_interval_seconds <= 0:
+        return ScheduleDecision(
+            due=False,
+            reason="invalid_free_range_sampling_interval",
+        )
+
+    # No sample has been taken during the current monitoring window yet.
+    if (
+        last_sample_at is None
+        or last_sample_at < window_start
+    ):
+        return ScheduleDecision(
+            due=True,
+            reason="free_range_sampling_due",
+            due_at=window_start,
+        )
+
+    due_at = last_sample_at + timedelta(
+        seconds=sampling_interval_seconds
+    )
+
+    if due_at <= now and due_at <= window_end:
+        return ScheduleDecision(
+            due=True,
+            reason="free_range_sampling_due",
+            due_at=due_at,
+        )
+
+    return ScheduleDecision(
+        due=False,
+        reason="free_range_sampling_not_due",
+        due_at=due_at,
+    )
+
 def _utc_naive_to_farm_local(
     value: datetime,
     timezone_name: str,
@@ -251,7 +315,6 @@ def get_last_scheduled_detection_at(
         .limit(1)
     )
 
-
 def evaluate_device_schedule(
     db: Session,
     device: Device,
@@ -265,18 +328,6 @@ def evaluate_device_schedule(
         device,
     )
 
-    if device.farming_type == FarmingType.free_range.value:
-        return ScheduleDecision(
-            due=False,
-            reason="free_range_sampling_interval_not_configured",
-        )
-
-    if device.farming_type != FarmingType.caged.value:
-        return ScheduleDecision(
-            due=False,
-            reason="unsupported_farming_type",
-        )
-
     timezone_name = device.farm.timezone or "UTC"
 
     try:
@@ -288,6 +339,63 @@ def evaluate_device_schedule(
         return ScheduleDecision(
             due=False,
             reason="invalid_farm_timezone",
+        )
+
+    if device.farming_type == FarmingType.free_range.value:
+        accumulator_window = free_range_accumulator.get_window(
+            device.device_id
+        )
+
+        last_sample_at = (
+            accumulator_window.last_sample_at
+            if accumulator_window is not None
+            else None
+        )
+
+        local_last_sample_at = None
+
+        if last_sample_at is not None:
+            try:
+                local_last_sample_at = _utc_naive_to_farm_local(
+                    last_sample_at,
+                    timezone_name,
+                )
+            except ZoneInfoNotFoundError:
+                return ScheduleDecision(
+                    due=False,
+                    reason="invalid_farm_timezone",
+                )
+
+        # Discard a partial accumulator window left from an earlier
+        # monitoring window before starting today's sampling.
+        active_window = _active_window(
+            local_now,
+            config.get("monitoring_start_time"),
+            config.get("monitoring_end_time"),
+        )
+
+        if (
+            config.get("monitoring_enabled", False)
+            and active_window is not None
+            and local_last_sample_at is not None
+            and local_last_sample_at < active_window[0]
+        ):
+            free_range_accumulator.reset(device.device_id)
+            local_last_sample_at = None
+
+        return evaluate_free_range_schedule(
+            config,
+            now=local_now,
+            last_sample_at=local_last_sample_at,
+            sampling_interval_seconds=(
+                settings.FREE_RANGE_SAMPLING_INTERVAL_SECONDS
+            ),
+        )
+
+    if device.farming_type != FarmingType.caged.value:
+        return ScheduleDecision(
+            due=False,
+            reason="unsupported_farming_type",
         )
 
     last_scheduled_at = get_last_scheduled_detection_at(
