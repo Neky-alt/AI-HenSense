@@ -1,7 +1,7 @@
 import type { Detection } from '../types/detection';
 import type { Device } from '../types/device';
 import type { Alert } from '../types/alert';
-import { apiGet, resolveBackendUrl } from './apiClient';
+import { apiGet, apiPost, resolveBackendUrl } from './apiClient';
 export interface ApiDetection extends Omit<Detection, 'screenshot_url' | 'source_type'> {
   capture_source_type: Detection['source_type'];
   image_url: string | null;
@@ -71,4 +71,26 @@ export async function getAlerts(_id = '', signal?: AbortSignal): Promise<Alert[]
   const devices = await apiGet<ApiDevice[]>('/devices', signal);
   const lists = await Promise.all(devices.map(d => apiGet<Alert[]>(`/devices/${encodeURIComponent(d.device_id)}/alerts`, signal)));
   return lists.flat().sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+}
+
+export interface ManualDetectionCommand {
+  command_id: string;
+  device_id: string;
+  command_type: 'manual_detection';
+  command_status: 'pending' | 'running' | 'completed' | 'failed';
+  created_at: string;
+  executed_at: string | null;
+  result_detection_id: string | null;
+  error_message: string | null;
+}
+
+export async function runManualDetection(
+  deviceId: string
+): Promise<ManualDetectionCommand> {
+  return apiPost<ManualDetectionCommand>(
+    `/devices/${encodeURIComponent(deviceId)}/commands`,
+    {
+      command_type: 'manual_detection',
+    }
+  );
 }

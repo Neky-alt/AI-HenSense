@@ -22,7 +22,18 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
   if (signal?.aborted) controller.abort();
   const timer = setTimeout(abort, 15000);
   try {
-    const response = await fetch(resolveBackendUrl(`/api/v1${path}`), { signal: controller.signal, headers: { Accept: 'application/json', Authorization: `Bearer ${account.token}` } });
+    const response = await fetch(
+  resolveBackendUrl(`/api/v1${path}`),
+  {
+    signal: controller.signal,
+    cache: 'no-store',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${account.token}`,
+      'Cache-Control': 'no-cache',
+    },
+  }
+);
     const body = await response.json();
     if (!response.ok || body.success !== true) throw serviceError(response.status, body.error?.code);
     await account.check();
@@ -30,5 +41,93 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', abort);
+  }
+}
+
+export async function apiPost<T>(
+  path: string,
+  payload: unknown
+): Promise<T> {
+  const account = await accountRequest();
+
+  if (process.env.EXPO_PUBLIC_DATA_SOURCE === 'cloud') {
+    throw new Error('This action requires the local Backend.');
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(
+      resolveBackendUrl(`/api/v1${path}`),
+      {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${account.token}`,
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const body = await response.json();
+
+    if (!response.ok || body.success !== true) {
+      throw serviceError(
+        response.status,
+        body.error?.code
+      );
+    }
+
+    await account.check();
+    return body.data as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function apiPut<T>(
+  path: string,
+  payload: unknown
+): Promise<T> {
+  const account = await accountRequest();
+
+  if (process.env.EXPO_PUBLIC_DATA_SOURCE === 'cloud') {
+    throw new Error('This action requires the local Backend.');
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const response = await fetch(
+      resolveBackendUrl(`/api/v1${path}`),
+      {
+        method: 'PUT',
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${account.token}`,
+        },
+        body: JSON.stringify(payload),
+      }
+    );
+
+    const body = await response.json();
+
+    if (!response.ok || body.success !== true) {
+      throw serviceError(
+        response.status,
+        body.error?.code
+      );
+    }
+
+    await account.check();
+    return body.data as T;
+  } finally {
+    clearTimeout(timer);
   }
 }

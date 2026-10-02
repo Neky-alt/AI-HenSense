@@ -1,6 +1,6 @@
 """BE-03 acceptance tests: real AI-service boundary + Free-range window accumulation."""
 
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,7 +26,11 @@ from app.services.capture_adapter import (
 )
 from app.services.core_data import dashboard_summary, latest_monitoring_detection_for_device
 from app.services.detection_pipeline import persist_ai_result
-from app.services.free_range_accumulator import FreeRangeAccumulator
+from app.services.free_range_accumulator import (
+    FreeRangeAccumulator,
+    free_range_accumulator,
+)
+from app.services.monitoring_schedule import evaluate_device_schedule
 
 
 class FakeCaptureAdapter:
@@ -287,6 +291,90 @@ def test_free_range_accumulator_turns_single_head_observations_into_one_snapshot
     assert detection.low_count == 2
     assert detection.low_ratio == pytest.approx(0.5)
 
+def test_free_range_snapshot_keeps_last_sample_timestamp(be03_env):
+    _, db, _, free = be03_env
+    acc = FreeRangeAccumulator()
+
+    observed_at = utcnow()
+    sample = AIInferenceResult(
+        total_count=1,
+        normal_count=1,
+        low_count=0,
+    )
+
+    out = acc.record_sample(
+        db,
+        free,
+        sample,
+        observed_at=observed_at,
+        force_snapshot=True,
+    )
+
+    assert out.snapshot_created is True
+
+    # Snapshot aggregation window should be cleared.
+    assert acc.get_window(free.device_id) is None
+
+    # Sampling timestamp must survive the snapshot.
+    assert acc.get_last_sample_at(free.device_id) == observed_at
+
+def test_free_range_schedule_keeps_sampling_interval_after_snapshot(be03_env):
+    _, db, _, free = be03_env
+
+    settings_row = db.scalar(
+        select(MonitoringSettings).where(
+            MonitoringSettings.farm_id == free.farm_id,
+            MonitoringSettings.farming_type == "free_range",
+        )
+    )
+
+    settings_row.monitoring_enabled = True
+    settings_row.monitoring_start_time = time(8, 0)
+    settings_row.monitoring_end_time = time(18, 0)
+    db.commit()
+
+    free_range_accumulator.reset(free.device_id)
+
+    sample_at = datetime(2026, 9, 27, 0, 5, 0)
+    check_at = sample_at + timedelta(seconds=5)
+
+    sample = AIInferenceResult(
+        total_count=1,
+        normal_count=1,
+        low_count=0,
+    )
+
+    try:
+        out = free_range_accumulator.record_sample(
+            db,
+            free,
+            sample,
+            observed_at=sample_at,
+            force_snapshot=True,
+        )
+
+        assert out.snapshot_created is True
+
+        # Snapshot aggregation window is cleared.
+        assert free_range_accumulator.get_window(free.device_id) is None
+
+        # Sampling timestamp is still available.
+        assert (
+            free_range_accumulator.get_last_sample_at(free.device_id)
+            == sample_at
+        )
+
+        decision = evaluate_device_schedule(
+            db,
+            free,
+            now=check_at,
+        )
+
+        assert decision.due is False
+        assert decision.reason == "free_range_sampling_not_due"
+
+    finally:
+        free_range_accumulator.reset(free.device_id)
 
 def test_free_range_accumulator_is_future_compatible_with_multi_head_ai(be03_env):
     _, db, _, free = be03_env

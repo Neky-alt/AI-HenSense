@@ -1,3 +1,4 @@
+import { apiGet, apiPut } from "./apiClient";
 import { localAccountKey } from "./accountRequest";
 import {
   DEFAULT_ALERT_NOTIFICATION_SETTINGS,
@@ -11,7 +12,6 @@ import {
   type FreeRangeMonitoringSettings,
 } from "../types/settings";
 
-const CAGE_STORAGE_KEY = "country-watch-cage-monitoring-settings-v2";
 const FREE_RANGE_STORAGE_KEY = "country-watch-free-range-monitoring-settings-v2";
 const ALERT_STORAGE_KEY = "country-watch-alert-settings-v2";
 const DEVICE_MEDIA_STORAGE_PREFIX = "country-watch-device-media-storage-v1";
@@ -26,46 +26,69 @@ function readSettings<T>(key: string, defaults: T): T {
   }
 }
 
-export async function getCageMonitoringSettings(): Promise<CageMonitoringSettings> {
-  type LegacyCageSettings = CageMonitoringSettings & {
-    automaticDetection?: boolean;
-    captureWindowEnabled?: boolean;
-    screenshotFrequencyMinutes?: number;
-    alertsEnabled?: boolean;
-  };
+interface BackendCageMonitoringSettings {
+  monitoring_enabled: boolean;
+  monitoring_start_time: string | null;
+  monitoring_end_time: string | null;
+  detection_mode: "interval" | "scheduled";
+  detection_interval_minutes: number | null;
+  scheduled_times: string[] | null;
+  cage_warning_low_ratio_threshold: number;
+  result_snapshot_interval_minutes: number | null;
+  free_range_warning_low_count_threshold: number | null;
+}
 
-  const stored = readSettings<LegacyCageSettings>(
-    CAGE_STORAGE_KEY,
-    DEFAULT_CAGE_MONITORING_SETTINGS
+function mapBackendCageSettings(
+  raw: BackendCageMonitoringSettings
+): CageMonitoringSettings {
+  return {
+    monitoringEnabled: raw.monitoring_enabled,
+    detectionMode: raw.detection_mode,
+    detectionFrequencyMinutes:
+      raw.detection_interval_minutes ??
+      DEFAULT_CAGE_MONITORING_SETTINGS.detectionFrequencyMinutes,
+    scheduledTimes:
+      raw.scheduled_times ??
+      [...DEFAULT_CAGE_MONITORING_SETTINGS.scheduledTimes],
+    captureStartTime:
+      raw.monitoring_start_time ??
+      DEFAULT_CAGE_MONITORING_SETTINGS.captureStartTime,
+    captureEndTime:
+      raw.monitoring_end_time ??
+      DEFAULT_CAGE_MONITORING_SETTINGS.captureEndTime,
+    lowProductionWarningThreshold:
+      raw.cage_warning_low_ratio_threshold,
+  };
+}
+
+export async function getCageMonitoringSettings(): Promise<CageMonitoringSettings> {
+  const raw = await apiGet<BackendCageMonitoringSettings>(
+    "/monitoring-settings/caged"
   );
 
-  return {
-    monitoringEnabled:
-      typeof stored.monitoringEnabled === "boolean"
-        ? stored.monitoringEnabled
-        : stored.automaticDetection ?? true,
-    detectionMode: stored.detectionMode ?? DEFAULT_CAGE_MONITORING_SETTINGS.detectionMode,
-    detectionFrequencyMinutes:
-      stored.detectionFrequencyMinutes ??
-      DEFAULT_CAGE_MONITORING_SETTINGS.detectionFrequencyMinutes,
-    scheduledTimes: Array.isArray(stored.scheduledTimes)
-      ? [...stored.scheduledTimes]
-      : [...DEFAULT_CAGE_MONITORING_SETTINGS.scheduledTimes],
-    captureStartTime:
-      stored.captureStartTime ?? DEFAULT_CAGE_MONITORING_SETTINGS.captureStartTime,
-    captureEndTime:
-      stored.captureEndTime ?? DEFAULT_CAGE_MONITORING_SETTINGS.captureEndTime,
-    lowProductionWarningThreshold:
-      stored.lowProductionWarningThreshold ??
-      DEFAULT_CAGE_MONITORING_SETTINGS.lowProductionWarningThreshold,
-  };
+  return mapBackendCageSettings(raw);
 }
 
 export async function updateCageMonitoringSettings(
   settings: CageMonitoringSettings
 ): Promise<CageMonitoringSettings> {
-  localStorage.setItem(localAccountKey(CAGE_STORAGE_KEY), JSON.stringify(settings));
-  return settings;
+  const raw = await apiPut<BackendCageMonitoringSettings>(
+    "/monitoring-settings/caged",
+    {
+      monitoring_enabled: settings.monitoringEnabled,
+      monitoring_start_time: settings.captureStartTime,
+      monitoring_end_time: settings.captureEndTime,
+      detection_mode: settings.detectionMode,
+      detection_interval_minutes: settings.detectionFrequencyMinutes,
+      scheduled_times: settings.scheduledTimes,
+      cage_warning_low_ratio_threshold:
+        settings.lowProductionWarningThreshold,
+      result_snapshot_interval_minutes: null,
+      free_range_warning_low_count_threshold: null,
+    }
+  );
+
+  return mapBackendCageSettings(raw);
 }
 
 export async function getFreeRangeMonitoringSettings(): Promise<FreeRangeMonitoringSettings> {

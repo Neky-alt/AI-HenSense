@@ -31,3 +31,73 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
   await account.check();
     return body.data as T;
 }
+
+export async function apiPost<T>(path: string, payload: unknown): Promise<T> {
+  const account = await accountRequest();
+
+  if (import.meta.env?.VITE_DATA_SOURCE === "cloud") {
+    throw new Error("This action requires the local Backend.");
+  }
+
+  const timeout = AbortSignal.timeout(15_000);
+
+  const response = await fetch(resolveBackendUrl(`/api/v1${path}`), {
+    method: "POST",
+    signal: timeout,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${account.token}`,
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+
+  const body = await response.json();
+
+  if (!response.ok || body.success !== true) {
+    throw serviceError(response.status, body.error?.code);
+  }
+
+  if (!("data" in body)) {
+    throw new Error("Invalid Backend response");
+  }
+
+  await account.check();
+  return body.data as T;
+}
+
+export async function apiPut<T>(path: string, payload: unknown): Promise<T> {
+  const account = await accountRequest();
+
+  if (import.meta.env?.VITE_DATA_SOURCE === "cloud") {
+    throw new Error("This action requires the local Backend.");
+  }
+
+  const timeout = AbortSignal.timeout(15_000);
+
+  const response = await fetch(resolveBackendUrl(`/api/v1${path}`), {
+    method: "PUT",
+    signal: timeout,
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${account.token}`,
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+
+  const body = await response.json();
+
+  if (!response.ok || body.success !== true) {
+    throw serviceError(response.status, body.error?.code);
+  }
+
+  if (!("data" in body)) {
+    throw new Error("Invalid Backend response");
+  }
+
+  await account.check();
+  return body.data as T;
+}

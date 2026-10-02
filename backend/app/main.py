@@ -17,7 +17,16 @@ from app.config import settings
 from app.quick_upload_limit import QuickUploadLimit
 from app.database import init_db
 from app.responses import failure
-from app.routers import dashboard, devices, health, settings_storage, quick_detections, be04_cloud, be04_status
+from app.routers import (
+    dashboard,
+    devices,
+    health,
+    settings_storage,
+    quick_detections,
+    be04_cloud,
+    be04_status,
+    hardware,
+)
 
 
 @asynccontextmanager
@@ -90,7 +99,7 @@ app.include_router(health.router, prefix=settings.API_PREFIX)
 app.include_router(devices.router, prefix=settings.API_PREFIX)
 app.include_router(dashboard.router, prefix=settings.API_PREFIX)
 app.include_router(settings_storage.router, prefix=settings.API_PREFIX)
-
+app.include_router(hardware.router, prefix=settings.API_PREFIX)
 app.include_router(quick_detections.router, prefix=settings.API_PREFIX)
 
 # Enable only after SUPABASE_URL / server key / publishable key are configured.
