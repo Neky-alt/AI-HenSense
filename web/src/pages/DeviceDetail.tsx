@@ -9,7 +9,7 @@ import InfoTooltip from "../components/InfoTooltip";
 import { MONITORING_STATUS_CLASS, MONITORING_STATUS_LABEL } from "../config/monitoringStatus";
 import { getDeviceStorageStatus } from "../services/settingsService";
 import type { DeviceStorageStatus } from "../types/settings";
-import { loadDevice } from "../services/detectionService";
+import { loadDevice, runManualDetection } from "../services/detectionService";
 import { useBackendData } from "../hooks/useBackendData";
 import BackendStatus from "../components/BackendStatus";
 import DetectionImage from "../components/DetectionImage";
@@ -59,11 +59,21 @@ function DeviceDetail() {
   const isHistorical = device.device_status !== "online" && hasRecordedData;
   const isFreeRange = device.farming_type === "free_range";
 
-  const runDetectionNow = () => {
-    if (isOffline) return;
-    // This phase only reads existing Detection records.
-    setManualDetectionMessage("Run Detection is not connected in this read-only Web stage.");
-  };
+const runDetectionNow = async () => {
+  if (isOffline) return;
+
+  try {
+    const command = await runManualDetection(device.device_id);
+
+    setManualDetectionMessage(
+      `Detection requested. Command status: ${command.command_status}.`
+    );
+  } catch {
+    setManualDetectionMessage(
+      "Unable to start detection. Please try again."
+    );
+  }
+};
 
   return (
     <div className="app">
@@ -90,7 +100,8 @@ function DeviceDetail() {
                 type="button"
                 className="device-detail-action-button primary"
                 onClick={runDetectionNow}
-                disabled title="This stage displays existing detections; manual capture is not connected"
+                disabled={isOffline}
+                title={isOffline ? "Device is offline" : "Run one manual detection now"}
               >
                 <Icon name="chart" size={17} />
                 Run Detection Now

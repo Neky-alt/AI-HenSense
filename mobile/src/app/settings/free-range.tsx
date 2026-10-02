@@ -1,4 +1,3 @@
-import ReadOnlyNotice from '../../components/ReadOnlyNotice';
 import { useEffect, useState } from 'react';
 import { Alert } from 'react-native';
 import AppScreen from '../../components/AppScreen';
@@ -7,8 +6,7 @@ import { getMonitoringSettings, saveMonitoringSettings } from '../../services/se
 import type { MonitoringSettings } from '../../types/settings';
 type Unit='minutes'|'hours';
 const HHMM=/^([01]\d|2[0-3]):[0-5]\d$/;
-export default function FreeRangeSettings() { return <ReadOnlyNotice/>; }
-function LegacyFreeRangeSettings(){
+export default function FreeRangeSettings(){
   const [settings,setSettings]=useState<MonitoringSettings|null>(null);
   const [unit,setUnit]=useState<Unit>('minutes');
   const [interval,setInterval]=useState('');
@@ -37,7 +35,10 @@ function LegacyFreeRangeSettings(){
     if(!/^\d+$/.test(count.trim())){Alert.alert('Invalid threshold','Enter a non-negative whole number for the Low Count threshold.');return;}
     await saveMonitoringSettings({...settings,monitoring_start_time:start,monitoring_end_time:end,
       result_snapshot_interval_minutes:minutes,free_range_warning_low_count_threshold:Number(count)});
-    Alert.alert('Saved','Free-range monitoring settings have been saved locally.');
+    Alert.alert(
+      'Saved',
+      'Free-range monitoring settings have been saved.'
+);
   };
   return <AppScreen>
     <SettingsBack/>
@@ -53,7 +54,7 @@ function LegacyFreeRangeSettings(){
     </SettingsCard>
     <SettingsCard title="Warning Rule" icon="warning-outline" subtitle="Warning uses Low Count from two consecutive formal Result Snapshots.">
       <TextField label="Low Count Warning Threshold" value={count} onChangeText={v=>setCount(v.replace(/[^\d]/g,''))} suffix="birds"/>
-      <InfoNote tone="red">Current rule: Low Count ≥ {count||'—'} for two consecutive formal snapshots → Warning.</InfoNote>
+      <InfoNote tone="red">Current rule: Low Count ≥ {count || '—'} for two consecutive formal snapshots → Warning.</InfoNote>
       <InfoNote>A snapshot ratio describes one picture; it is not the overall Low-production Ratio for the moving flock.</InfoNote>
     </SettingsCard>
     <SaveButton onPress={save}/>
