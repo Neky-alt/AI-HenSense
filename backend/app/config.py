@@ -82,6 +82,12 @@ class Settings(BaseSettings):
     BE04_FARM_ID: str = ""
     BE04_OWNER_USER_ID: str = ""
 
+    # Device Management (docs/DEVICE_MANAGEMENT_API.md): when true, Add Device and
+    # Purge write to Supabase synchronously with SUPABASE_KEY (server-side only) and
+    # fail closed with 503 CLOUD_UNAVAILABLE if the cloud cannot be reached.
+    # Keep false until the cloud devices.device_code UNIQUE constraint exists.
+    DEVICE_CLOUD_WRITE_ENABLED: bool = False
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]

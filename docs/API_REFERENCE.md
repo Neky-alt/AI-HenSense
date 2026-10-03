@@ -31,6 +31,10 @@
 | GET | `/health` | 无认证；data.status、database、app_version、api_prefix |
 | GET | `/devices` | 可选 query：farming_type=caged/free_range；status=normal/warning/offline；sort=low_desc/low_asc/name_asc/name_desc；返回有权访问且 active 的设备数组 |
 | GET | `/devices/{device_id}` | 返回设备信息、计算状态、最新监测检测 |
+| POST | `/devices` | 添加设备：`device_code`（全局唯一）、`device_name`、`farming_type`、可选 `farm_id`；201。错误码见 [DEVICE_MANAGEMENT_API.md](DEVICE_MANAGEMENT_API.md) |
+| GET | `/devices/removed` | 本人已移除（软删除）的设备 |
+| PATCH | `/devices/{device_id}` | 只允许 `{"device_name"}`；其他字段 422 |
+| DELETE | `/devices/{device_id}` | 软删除：保留历史，编号继续占用；`?purge_history=true` 则本地+云端彻底删除，编号释放 |
 | GET | `/devices/{device_id}/detections/latest` | Cage 最新记录；Free-range 仅正式 snapshot；可返回 null |
 | GET | `/devices/{device_id}/detections` | 未软删除历史数组，detected_at、created_at 倒序；当前无分页 query |
 | GET | `/devices/{device_id}/alerts` | 设备告警数组，created_at 倒序 |

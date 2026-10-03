@@ -140,8 +140,11 @@ class Device(Base):
         CheckConstraint(
             f"farming_type IN ({_values(FarmingType)})", name="ck_devices_farming_type"
         ),
-        # device_code 只要求在同一个 Farm 内唯一。不同 Farm 可以各自使用 CAGE-01。
         UniqueConstraint("farm_id", "device_code", name="uq_devices_farm_code"),
+        # 2026-10-03 团队决定：device_code 全局唯一（一台 Pi 只能被一个账户添加）。
+        # 软删除的设备仍占用编号；彻底删除（purge）后才释放。
+        # 已有数据库请用 scripts/migrate_device_code_unique.py 显式建索引。
+        UniqueConstraint("device_code", name="uq_devices_device_code"),
     )
 
     farm: Mapped["Farm"] = relationship(back_populates="devices")
