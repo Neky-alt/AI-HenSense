@@ -131,3 +131,50 @@ export async function apiPut<T>(
     clearTimeout(timer);
   }
 }
+// Shared writer for PATCH/DELETE (Device Management). Same envelope and
+// error contract as apiPost/apiPut: throws serviceError(status, error.code).
+async function apiSend<T>(
+  method: 'PATCH' | 'DELETE',
+  path: string,
+  payload?: unknown
+): Promise<T> {
+  const account = await accountRequest();
+
+  if (process.env.EXPO_PUBLIC_DATA_SOURCE === 'cloud') {
+    throw new Error('This action requires the local Backend.');
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      Authorization: `Bearer ${account.token}`,
+    };
+    if (payload !== undefined) headers['Content-Type'] = 'application/json';
+
+    const response = await fetch(resolveBackendUrl(`/api/v1${path}`), {
+      method,
+      signal: controller.signal,
+      headers,
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+
+    const body = await response.json();
+
+    if (!response.ok || body.success !== true) {
+      throw serviceError(response.status, body.error?.code);
+    }
+
+    await account.check();
+    return body.data as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export const apiPatch = <T>(path: string, payload: unknown) =>
+  apiSend<T>('PATCH', path, payload);
+
+export const apiDelete = <T>(path: string) => apiSend<T>('DELETE', path);

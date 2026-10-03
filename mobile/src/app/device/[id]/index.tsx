@@ -1,13 +1,14 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import AppScreen from '../../../components/AppScreen';
 import BackendStatus from '../../../components/BackendStatus';
 import DetectionHistory from '../../../components/DetectionHistory';
 import DevicePhoto from '../../../components/DevicePhoto';
 import LatestManualDetection from '../../../components/LatestManualDetection';
+import RemoveDeviceSheet from '../../../components/RemoveDeviceSheet';
 import {
   ConnectionBadge,
   MonitoringBadge,
@@ -20,6 +21,7 @@ import {
   withDetection,
 } from '../../../services/detectionService';
 import { getDeviceById } from '../../../services/deviceStorage';
+import { deviceManagementEnabled } from '../../../services/deviceService';
 import type { Device } from '../../../types/device';
 import { formatRatio } from '../../../utils/ratio';
 import { formatDeviceUpdate } from '../../../utils/time';
@@ -61,6 +63,8 @@ export default function DeviceDetail() {
 
   const [message, setMessage] = useState('');
   const [requesting, setRequesting] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const canManage = deviceManagementEnabled();
 
   if (state.loading || state.error) {
     return (
@@ -241,24 +245,27 @@ const runDetection = async () => {
           </Text>
         </Pressable>
 
-        <Pressable
-          onPress={() =>
-            router.push(
-              `/device/${device.device_id}/storage`
-            )
-          }
-          style={styles.secondaryBtn}
-        >
-          <Ionicons
-            name="settings-outline"
-            size={16}
-            color={COLORS.primaryDark}
-          />
+        {canManage && (
+          <Pressable
+            accessibilityRole="button"
+            onPress={() =>
+              router.push(
+                `/device/edit/${device.device_id}`
+              )
+            }
+            style={styles.secondaryBtn}
+          >
+            <Ionicons
+              name="create-outline"
+              size={16}
+              color={COLORS.primaryDark}
+            />
 
-          <Text style={styles.secondaryText}>
-            Storage Settings
-          </Text>
-        </Pressable>
+            <Text style={styles.secondaryText}>
+              Edit Name
+            </Text>
+          </Pressable>
+        )}
       </View>
 
       {message ? (
@@ -375,31 +382,6 @@ const runDetection = async () => {
         </View>
       </View>
 
-      <View style={styles.storage}>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.storageTitle}>
-            Media storage
-          </Text>
-
-          <Text style={styles.storageText}>
-            Storage configuration is
-            outside read-only Mobile Stage
-            1.
-          </Text>
-        </View>
-
-        <Pressable
-          onPress={() =>
-            router.push(
-              `/device/${device.device_id}/storage`
-            )
-          }
-        >
-          <Text style={styles.link}>
-            Manage →
-          </Text>
-        </Pressable>
-      </View>
 
       <Text style={styles.updated}>
         Updated{' '}
@@ -420,6 +402,42 @@ const runDetection = async () => {
         deviceId={device.device_id}
         farmingType={device.farming_type}
       />
+
+      {canManage && (
+        <>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => setRemoveOpen(true)}
+            style={styles.removeBtn}
+          >
+            <Ionicons
+              name="trash-outline"
+              size={16}
+              color={COLORS.danger}
+            />
+
+            <Text style={styles.removeText}>
+              Remove Device
+            </Text>
+          </Pressable>
+
+          <RemoveDeviceSheet
+            device={device}
+            visible={removeOpen}
+            onClose={() => setRemoveOpen(false)}
+            onRemoved={(purged) => {
+              setRemoveOpen(false);
+              router.replace(free ? '/free-range' : '/cage');
+              Alert.alert(
+                'Device removed',
+                purged
+                  ? 'The device and all its history have been deleted.'
+                  : 'The device has been removed. Its history is kept.'
+              );
+            }}
+          />
+        </>
+      )}
     </AppScreen>
   );
 }
@@ -587,6 +605,26 @@ const styles = StyleSheet.create({
     color: COLORS.primaryDark,
   },
 
+  removeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: 12,
+    marginTop: 18,
+    marginBottom: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#FAD3D4',
+    backgroundColor: '#FFF8F8',
+  },
+
+  removeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: COLORS.danger,
+  },
+
   message: {
     flexDirection: 'row',
     gap: 6,
@@ -694,35 +732,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: COLORS.text,
     marginTop: 2,
-  },
-
-  storage: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    padding: 13,
-    borderRadius: 14,
-    backgroundColor:
-      COLORS.primarySoft,
-    marginTop: 12,
-  },
-
-  storageTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: COLORS.primaryDark,
-  },
-
-  storageText: {
-    fontSize: 9.5,
-    color: COLORS.primaryDark,
-    marginTop: 3,
-  },
-
-  link: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: COLORS.primaryDark,
   },
 
   updated: {

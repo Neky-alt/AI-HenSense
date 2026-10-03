@@ -107,7 +107,6 @@ export default function EditProfile() {
       {!!error && <Text style={s.error}>{error}</Text>}
       {!!success && <Text style={s.success}>{success}</Text>}
       <View style={s.actions}>
-        <Pressable style={s.cancel} onPress={() => router.back()}><Text style={s.cancelText}>Back</Text></Pressable>
         <Pressable disabled={saving || photoSaving} style={[s.save, (saving || photoSaving) && { opacity: .6 }]} onPress={save}>
           {saving ? <ActivityIndicator color="#fff"/> : <Text style={s.saveText}>Save account</Text>}
         </Pressable>
@@ -133,8 +132,6 @@ const s = StyleSheet.create({
   readonly: { backgroundColor: '#F3F6F5' }, readonlyText: { fontSize: 12, color: COLORS.textSecondary },
   note: { fontSize: 10.5, color: COLORS.textSecondary, marginBottom: 16 },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 9, marginTop: 18 },
-  cancel: { paddingHorizontal: 13, paddingVertical: 11, borderRadius: 10, borderWidth: 1, borderColor: COLORS.border },
-  cancelText: { fontSize: 11, fontWeight: '800', color: COLORS.textSecondary },
   save: { paddingHorizontal: 14, paddingVertical: 11, borderRadius: 10, backgroundColor: COLORS.primary, minWidth: 112, alignItems: 'center' },
   saveText: { fontSize: 11, fontWeight: '800', color: '#fff' },
   error: { color: COLORS.danger, fontSize: 11, marginTop: 7 },

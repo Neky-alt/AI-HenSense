@@ -65,11 +65,10 @@ export default function ProfileScreen() {
     </Panel>
     {!!profileError && <Text style={styles.error}>Cloud profile: {profileError}</Text>}
     <Text style={styles.group}>ACCOUNT & SETTINGS</Text>
-    <MenuRow title="Notification Settings" subtitle="Manage alert preferences" icon="notifications-outline" tone="red" onPress={() => router.push('/settings/alerts')} />
     <MenuRow title="Cage Monitoring Settings" subtitle="Intervals, schedules and thresholds" icon="grid-outline" onPress={() => router.push('/settings/cage')} />
     <MenuRow title="Free-range Monitoring Settings" subtitle="Snapshot intervals and thresholds" icon="leaf-outline" onPress={() => router.push('/settings/free-range')} />
     <Pressable disabled={pending} onPress={logout} style={styles.signOut}><Ionicons name="log-out-outline" size={18} color={COLORS.danger}/><Text style={styles.signOutText}>{pending ? 'Signing out…' : 'Sign out'}</Text></Pressable>
-    <Text style={styles.note}>Account information syncs with HenSense Web when each app refreshes or reopens its Profile. Monitoring data is read from the shared Backend. Device and monitoring configuration is read-only in Mobile Stage 1.</Text>
+    <Text style={styles.note}>Account information syncs with HenSense Web when each app refreshes or reopens its Profile. Monitoring data and settings are read from the shared Backend.</Text>
   </AppScreen>;
 }
 function MenuRow({ title, subtitle, icon, tone = 'green', onPress }: { title: string; subtitle: string; icon: any; tone?: 'green' | 'red'; onPress: () => void }) {

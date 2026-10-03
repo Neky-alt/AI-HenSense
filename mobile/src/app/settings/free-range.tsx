@@ -13,11 +13,21 @@ export default function FreeRangeSettings(){
   const [count,setCount]=useState('');
   const [start,setStart]=useState('');
   const [end,setEnd]=useState('');
-  useEffect(()=>{getMonitoringSettings('free_range').then(s=>{
-    setSettings(s);setInterval(String(s.result_snapshot_interval_minutes??5));
-    setCount(String(s.free_range_warning_low_count_threshold??3));
-    setStart(s.monitoring_start_time??'');setEnd(s.monitoring_end_time??'');
-  });},[]);
+  const [loadError,setLoadError]=useState(false);
+  const [saving,setSaving]=useState(false);
+  const [reload,setReload]=useState(0);
+  useEffect(()=>{
+    let active=true;
+    setLoadError(false);
+    getMonitoringSettings('free_range').then(s=>{
+      if(!active)return;
+      setSettings(s);setInterval(String(s.result_snapshot_interval_minutes??5));
+      setCount(String(s.free_range_warning_low_count_threshold??3));
+      setStart(s.monitoring_start_time??'');setEnd(s.monitoring_end_time??'');
+    }).catch(()=>{if(active)setLoadError(true);});
+    return()=>{active=false;};
+  },[reload]);
+  if(loadError)return <AppScreen><SettingsBack/><SettingsHeader title="Free-range Monitoring Settings" subtitle="Unable to load monitoring settings. Check your connection and try again."/><SaveButton label="Retry" onPress={()=>setReload(v=>v+1)}/></AppScreen>;
   if(!settings)return <AppScreen><SettingsBack/><SettingsHeader title="Free-range Monitoring Settings" subtitle="Loading, please wait..."/></AppScreen>;
   const changeUnit=(next:Unit)=>{
     const value=Number(interval);
@@ -28,17 +38,21 @@ export default function FreeRangeSettings(){
     setUnit(next);
   };
   const save=async()=>{
+    if(saving)return;
     if(!HHMM.test(start)||!HHMM.test(end)){Alert.alert('Invalid time','Use a valid 24-hour HH:MM monitoring window.');return;}
     if(!/^\d+(?:\.\d{1,2})?$/.test(interval.trim())||Number(interval)<=0){Alert.alert('Invalid interval','Enter a positive Result Snapshot interval.');return;}
     const minutes=Math.round(Number(interval)*(unit==='hours'?60:1));
     if(!minutes){Alert.alert('Invalid interval','Choose an interval of at least one minute.');return;}
     if(!/^\d+$/.test(count.trim())){Alert.alert('Invalid threshold','Enter a non-negative whole number for the Low Count threshold.');return;}
-    await saveMonitoringSettings({...settings,monitoring_start_time:start,monitoring_end_time:end,
-      result_snapshot_interval_minutes:minutes,free_range_warning_low_count_threshold:Number(count)});
-    Alert.alert(
-      'Saved',
-      'Free-range monitoring settings have been saved.'
-);
+    setSaving(true);
+    try{
+      const saved=await saveMonitoringSettings({...settings,monitoring_start_time:start,monitoring_end_time:end,
+        result_snapshot_interval_minutes:minutes,free_range_warning_low_count_threshold:Number(count)});
+      setSettings(saved);
+      Alert.alert('Saved','Free-range monitoring settings have been saved.');
+    }catch{
+      Alert.alert('Save failed','Unable to save monitoring settings. Check your connection and try again.');
+    }finally{setSaving(false);}
   };
   return <AppScreen>
     <SettingsBack/>
@@ -57,6 +71,6 @@ export default function FreeRangeSettings(){
       <InfoNote tone="red">Current rule: Low Count ≥ {count || '—'} for two consecutive formal snapshots → Warning.</InfoNote>
       <InfoNote>A snapshot ratio describes one picture; it is not the overall Low-production Ratio for the moving flock.</InfoNote>
     </SettingsCard>
-    <SaveButton onPress={save}/>
+    <SaveButton onPress={save} saving={saving}/>
   </AppScreen>;
 }

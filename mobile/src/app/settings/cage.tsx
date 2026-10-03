@@ -61,8 +61,13 @@ export default function CageSettings() {
   const [saving, setSaving] =
     useState(false);
 
+  const [reload, setReload] =
+    useState(0);
+
   useEffect(() => {
     let active = true;
+
+    setLoadError(false);
 
     getMonitoringSettings('caged')
       .then((s) => {
@@ -110,7 +115,7 @@ export default function CageSettings() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [reload]);
 
   if (loadError) {
     return (
@@ -120,6 +125,13 @@ export default function CageSettings() {
         <SettingsHeader
           title="Cage Monitoring Settings"
           subtitle="Unable to load monitoring settings. Check your connection and try again."
+        />
+
+        <SaveButton
+          label="Retry"
+          onPress={() =>
+            setReload((v) => v + 1)
+          }
         />
       </AppScreen>
     );
@@ -443,14 +455,15 @@ export default function CageSettings() {
 
         <InfoNote>
           Monitoring Status is Normal
-          or Warning. System alerts are
-          generated independently of
-          notification preferences.
+          or Warning. Alerts are created
+          and resolved automatically by
+          the system.
         </InfoNote>
       </SettingsCard>
 
       <SaveButton
         onPress={save}
+        saving={saving}
       />
     </AppScreen>
   );
