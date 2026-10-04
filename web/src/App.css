@@ -2979,3 +2979,16 @@ button { color: inherit; }
 .global-search:focus-within { border-color: #D49C18; box-shadow: 0 0 0 3px rgba(212,156,24,.13); }
 
 .dd-nav-button[aria-pressed="true"] { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+
+/* Device Management (Add / Edit / Delete) */
+.form-group input.input-error { border-color: var(--warning); box-shadow: 0 0 0 3px rgba(239,68,68,.12); }
+.form-group input:disabled { background: #f6f3ea; color: var(--muted); }
+.form-hint { margin: 2px 0 6px; color: var(--muted); font-size: 10px; }
+.form-error-action { margin-top: 8px; display: grid; gap: 8px; justify-items: start; }
+.form-error-action p { margin: 0; color: #7a2b2b; }
+.delete-mode-options { margin: 0 0 12px; display: grid; gap: 8px; text-align: left; }
+.system-modal .form-group { margin-bottom: 12px; text-align: left; }
+.system-modal .form-error { margin-bottom: 12px; text-align: left; }
+.primary-button:disabled, .secondary-button:disabled, .danger-button:disabled { opacity: .55; cursor: not-allowed; }
+
+.dd-retention-note { display: flex; align-items: center; gap: 6px; margin: 14px 0 4px; color: var(--muted); font-size: 11px; }

@@ -11,7 +11,19 @@ from config import PiWorkerConfig
 
 
 class BackendClientError(RuntimeError):
-    """Raised when communication with the Backend fails."""
+    """Raised when communication with the Backend fails.
+
+    ``status_code`` is the HTTP status when the Backend answered, or None when the
+    request never got a response (network error, timeout).
+    """
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+    @property
+    def retryable(self) -> bool:
+        return self.status_code is None or self.status_code >= 500
 
 
 class BackendClient:
@@ -46,7 +58,8 @@ class BackendClient:
         except ValueError as exc:
             raise BackendClientError(
                 "Backend returned a non-JSON response "
-                f"(HTTP {response.status_code})"
+                f"(HTTP {response.status_code})",
+                response.status_code,
             ) from exc
 
         if not response.ok:
@@ -57,7 +70,8 @@ class BackendClient:
 
             raise BackendClientError(
                 f"Backend request failed "
-                f"(HTTP {response.status_code}): {detail}"
+                f"(HTTP {response.status_code}): {detail}",
+                response.status_code,
             )
 
         if not isinstance(payload, dict):
@@ -331,4 +345,4 @@ class BackendClient:
                 f"Command failure request failed: {exc}"
             ) from exc
 
-        return self._read_response(response)
+        return self._read_response(response)

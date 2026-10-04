@@ -44,6 +44,11 @@ from app.services.detection_images import (
     resolve_image_path,
 )
 from app.services.detection_pipeline import record_detection_failure
+from app.services.detection_deletion import (
+    DetectionNotFound,
+    delete_detection_image,
+    delete_detection_record,
+)
 from app.services.device_cloud import get_device_cloud
 from app.services.device_management import (
     DeviceError,
@@ -487,6 +492,39 @@ def get_annotated_image(
         db,
         annotated=True,
     )
+
+
+@router.delete(
+    "/{device_id}/detections/{detection_id}/image",
+    summary="Delete a detection's images (record and counts are kept)",
+)
+def delete_history_image(
+    device_id: str,
+    detection_id: str,
+    db: Session = Depends(authorized_db),
+) -> dict:
+    _active_device_or_404(db, device_id)
+    try:
+        detection = delete_detection_image(db, device_id, detection_id)
+    except DetectionNotFound:
+        raise HTTPException(status_code=404, detail="Detection not found") from None
+    return success(serialize_detection(detection))
+
+
+@router.delete(
+    "/{device_id}/detections/{detection_id}",
+    summary="Delete a detection record from History (soft delete, synced to cloud)",
+)
+def delete_history_record(
+    device_id: str,
+    detection_id: str,
+    db: Session = Depends(authorized_db),
+) -> dict:
+    _active_device_or_404(db, device_id)
+    try:
+        return success(delete_detection_record(db, device_id, detection_id))
+    except DetectionNotFound:
+        raise HTTPException(status_code=404, detail="Detection not found") from None
 
 
 def _detection_media(

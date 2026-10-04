@@ -6,6 +6,7 @@ import DeviceConnectionStatus from "./DeviceConnectionStatus";
 import { formatRatio } from "../utils/ratio";
 import DetectionImage from "./DetectionImage";
 import Icon from "./Icon";
+import { LOCAL_BACKEND_WRITES } from "../services/apiClient";
 
 interface Props {
   device: Device;
@@ -82,8 +83,10 @@ export default function DeviceCard({ device, onDelete }: Props) {
         <span className="updated-label"><Icon name="clock" size={15} /> {isOffline && hasResult ? "Recorded" : "Updated"} {device.last_updated}</span>
         <div className="device-card-actions">
           <button className="details-button" onClick={(event) => { event.stopPropagation(); openDetails(); }}>View Details <Icon name="chevron" size={15} /></button>
-          <button className="edit-device-button" disabled title="Device editing is not connected to the Backend" onClick={(event) => { event.stopPropagation(); navigate(`/devices/${device.device_id}/edit`); }}><Icon name="edit" size={15} /> Edit</button>
-          <button className="delete-device-button" disabled title="Device deletion is not available in the Backend API" onClick={(event) => { event.stopPropagation(); onDelete?.(device); }}><Icon name="trash" size={15} /> Delete</button>
+          {LOCAL_BACKEND_WRITES && <>
+            <button className="edit-device-button" onClick={(event) => { event.stopPropagation(); navigate(`/devices/${device.device_id}/edit`); }}><Icon name="edit" size={15} /> Edit</button>
+            {onDelete && <button className="delete-device-button" onClick={(event) => { event.stopPropagation(); onDelete(device); }}><Icon name="trash" size={15} /> Delete</button>}
+          </>}
         </div>
       </div>
     </article>

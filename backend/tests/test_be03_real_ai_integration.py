@@ -8,7 +8,9 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.auth import current_user
 from app.database import Base, get_db
+from app.farm_access import owned_cloud_farms
 from app.enums import AlertStatus, AlertType, TriggerType
 from app.main import app
 from app.models import Alert, Detection, Device, Farm, MonitoringSettings, Profile, utcnow
@@ -125,6 +127,9 @@ def be03_env():
         yield db
 
     app.dependency_overrides[get_db] = _override_db
+    # User endpoints now require a verified owner (authorized_db); simulate the farm owner.
+    app.dependency_overrides[current_user] = lambda: "00000000-0000-0000-0000-000000000001"
+    app.dependency_overrides[owned_cloud_farms] = lambda: ["10000000-0000-0000-0000-000000000001"]
     client = TestClient(app)
     try:
         yield client, db, cage, free

@@ -1,6 +1,5 @@
 export type DetectionMode = "interval" | "scheduled";
 export type FrequencyUnit = "minutes" | "hours" | "days";
-export type StorageLimitAction = "delete_oldest" | "stop_recording";
 
 export interface CageMonitoringSettings {
   monitoringEnabled: boolean;
@@ -24,26 +23,9 @@ export interface FreeRangeMonitoringSettings {
 }
 
 export interface AlertNotificationSettings {
-  notificationsEnabled: boolean;
-  lowProductionWarningEnabled: boolean;
-  deviceOfflineEnabled: boolean;
-  detectionFailedEnabled: boolean;
-  staleDataEnabled: boolean;
-}
-
-export interface DeviceMediaStorageSettings {
-  storeDetectionImages: boolean;
-  storeVideoLocally: boolean;
-  maximumMediaStorageGb: number;
-  detectionImageRetentionDays: number;
-  videoRetentionDays: number;
-  storageLimitAction: StorageLimitAction;
-}
-
-export interface DeviceStorageStatus {
-  capacityGb: number;
-  usedGb: number;
-  availableGb: number;
+  // Stored in the Backend (/notification-settings). Controls the in-app alert
+  // badge and dropdown in the header. Email/push delivery does not exist.
+  inAppEnabled: boolean;
 }
 
 export const DEFAULT_CAGE_MONITORING_SETTINGS: CageMonitoringSettings = {
@@ -65,18 +47,5 @@ export const DEFAULT_FREE_RANGE_MONITORING_SETTINGS: FreeRangeMonitoringSettings
 };
 
 export const DEFAULT_ALERT_NOTIFICATION_SETTINGS: AlertNotificationSettings = {
-  notificationsEnabled: true,
-  lowProductionWarningEnabled: true,
-  deviceOfflineEnabled: true,
-  detectionFailedEnabled: true,
-  staleDataEnabled: true,
-};
-
-export const DEFAULT_DEVICE_MEDIA_STORAGE_SETTINGS: DeviceMediaStorageSettings = {
-  storeDetectionImages: true,
-  storeVideoLocally: true,
-  maximumMediaStorageGb: 80,
-  detectionImageRetentionDays: 30,
-  videoRetentionDays: 7,
-  storageLimitAction: "delete_oldest",
+  inAppEnabled: true,
 };

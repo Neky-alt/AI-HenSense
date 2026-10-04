@@ -14,4 +14,6 @@ export interface Alert {
   message: string;
   created_at: string;
   resolved_at?: string | null;
+  /** Added by the Web client from the Backend device list (not part of the Alert row). */
+  device_name?: string;
 }

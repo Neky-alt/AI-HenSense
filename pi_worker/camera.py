@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +12,11 @@ from pathlib import Path
 
 PI_WORKER_DIR = Path(__file__).resolve().parent
 CAPTURE_DIR = PI_WORKER_DIR / "captures"
+
+# Fixed retention (team decision 2026-10-03): captures on the SD card are kept
+# for 30 days, matching the Backend's DETECTION_IMAGE_RETENTION_DAYS.
+CAPTURE_RETENTION_DAYS = 30
+CAPTURE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 
 
 class CameraError(RuntimeError):
@@ -152,3 +158,36 @@ def capture_image() -> Path:
         return test_image
 
     return _capture_with_picamera2()
+
+
+def prune_old_captures(
+    directory: Path = CAPTURE_DIR,
+    *,
+    retention_days: int = CAPTURE_RETENTION_DAYS,
+    now: float | None = None,
+) -> int:
+    """Delete captured images older than the retention period. Returns files removed.
+
+    Only image files directly inside the capture directory are touched.
+    """
+
+    if not directory.is_dir():
+        return 0
+
+    cutoff = (now if now is not None else time.time()) - retention_days * 86400
+    removed = 0
+
+    for path in directory.iterdir():
+        if (
+            path.is_file()
+            and not path.is_symlink()
+            and path.suffix.lower() in CAPTURE_SUFFIXES
+            and path.stat().st_mtime < cutoff
+        ):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError as exc:
+                print(f"[Pi Camera] Could not delete {path.name}: {exc}")
+
+    return removed

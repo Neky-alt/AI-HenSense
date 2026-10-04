@@ -3,6 +3,9 @@ import { serviceError } from '../lib/userMessages';
 // This is the Backend origin, not the independent AI service or /api/v1 prefix.
 export const API_BASE_URL = (import.meta.env?.VITE_API_BASE_URL || "http://127.0.0.1:8006").replace(/\/+$/, "");
 
+/** Writes (Add/Edit/Delete, settings, commands) only exist on the local Backend. */
+export const LOCAL_BACKEND_WRITES = import.meta.env?.VITE_DATA_SOURCE !== "cloud";
+
 export function resolveBackendUrl(path: string, baseUrl = API_BASE_URL): string {
   const url = new URL(path, `${baseUrl}/`);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -32,24 +35,25 @@ export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> 
     return body.data as T;
 }
 
-export async function apiPost<T>(path: string, payload: unknown): Promise<T> {
+async function apiWrite<T>(method: "POST" | "PUT" | "PATCH" | "DELETE", path: string, payload?: unknown): Promise<T> {
   const account = await accountRequest();
 
-  if (import.meta.env?.VITE_DATA_SOURCE === "cloud") {
+  if (!LOCAL_BACKEND_WRITES) {
     throw new Error("This action requires the local Backend.");
   }
 
   const timeout = AbortSignal.timeout(15_000);
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    Authorization: `Bearer ${account.token}`,
+  };
+  if (payload !== undefined) headers["Content-Type"] = "application/json";
 
   const response = await fetch(resolveBackendUrl(`/api/v1${path}`), {
-    method: "POST",
+    method,
     signal: timeout,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${account.token}`,
-    },
-    body: JSON.stringify(payload),
+    headers,
+    body: payload === undefined ? undefined : JSON.stringify(payload),
     cache: "no-store",
   });
 
@@ -67,37 +71,18 @@ export async function apiPost<T>(path: string, payload: unknown): Promise<T> {
   return body.data as T;
 }
 
-export async function apiPut<T>(path: string, payload: unknown): Promise<T> {
-  const account = await accountRequest();
+export function apiPost<T>(path: string, payload: unknown): Promise<T> {
+  return apiWrite<T>("POST", path, payload);
+}
 
-  if (import.meta.env?.VITE_DATA_SOURCE === "cloud") {
-    throw new Error("This action requires the local Backend.");
-  }
+export function apiPut<T>(path: string, payload: unknown): Promise<T> {
+  return apiWrite<T>("PUT", path, payload);
+}
 
-  const timeout = AbortSignal.timeout(15_000);
+export function apiPatch<T>(path: string, payload: unknown): Promise<T> {
+  return apiWrite<T>("PATCH", path, payload);
+}
 
-  const response = await fetch(resolveBackendUrl(`/api/v1${path}`), {
-    method: "PUT",
-    signal: timeout,
-    headers: {
-      Accept: "application/json",
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${account.token}`,
-    },
-    body: JSON.stringify(payload),
-    cache: "no-store",
-  });
-
-  const body = await response.json();
-
-  if (!response.ok || body.success !== true) {
-    throw serviceError(response.status, body.error?.code);
-  }
-
-  if (!("data" in body)) {
-    throw new Error("Invalid Backend response");
-  }
-
-  await account.check();
-  return body.data as T;
+export function apiDelete<T>(path: string): Promise<T> {
+  return apiWrite<T>("DELETE", path);
 }

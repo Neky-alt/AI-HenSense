@@ -15,7 +15,6 @@ import Profile from "./pages/Profile";
 import CageSettings from "./pages/CageSettings";
 import FreeRangeSettings from "./pages/FreeRangeSettings";
 import AlertSettings from "./pages/AlertSettings";
-import DeviceStorageSettings from "./pages/DeviceStorageSettings";
 
 import Login from "./pages/Login";
 import PasswordRecovery from "./pages/PasswordRecovery";
@@ -47,7 +46,6 @@ function App() {
           <Route path="/devices/:id/edit" element={<EditDevice />} />
           <Route path="/devices/:id" element={<DeviceDetail />} />
           <Route path="/devices/:id/history" element={<DeviceHistory />} />
-          <Route path="/devices/:id/storage" element={<DeviceStorageSettings />} />
 
           <Route
             path="/devices/:id/detections/:detectionId"
@@ -59,4 +57,4 @@ function App() {
   );
 }
 
-export default App;
+export default App;

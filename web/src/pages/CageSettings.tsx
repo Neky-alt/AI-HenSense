@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import AppHeader from "../components/AppHeader";
 import Icon from "../components/Icon";
 import InfoTooltip from "../components/InfoTooltip";
+import { userMessage } from "../lib/userMessages";
 import {
   getCageMonitoringSettings,
   updateCageMonitoringSettings,
@@ -64,6 +65,8 @@ export default function CageSettings() {
       setFrequencyValue(presentation.value);
       setFrequencyUnit(presentation.unit);
       setThresholdValue(String(Math.round(loaded.lowProductionWarningThreshold * 100)));
+    }).catch((err) => {
+      setToast({ type: "error", message: userMessage(err, "Unable to load settings. Please refresh.") });
     });
   }, []);
 
@@ -209,7 +212,12 @@ export default function CageSettings() {
       lowProductionWarningThreshold: threshold,
     };
 
-    await updateCageMonitoringSettings(nextSettings);
+    try {
+      await updateCageMonitoringSettings(nextSettings);
+    } catch (err) {
+      setToast({ type: "error", message: userMessage(err, "Settings were not saved. Please try again.") });
+      return;
+    }
     setSettings(nextSettings);
     setToast({ type: "success", message: "Settings saved." });
   };

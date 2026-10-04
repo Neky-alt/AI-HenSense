@@ -1,337 +1,236 @@
-import {
-  useState,
-  type FormEvent,
-} from "react";
-
+import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
+
 import AppHeader from "../components/AppHeader";
-import cage01 from "../assets/mock/cage-01.jpg";
-import freeRange from "../assets/mock/free-range.jpg";
-
-import type {
-  Device,
-  FarmingType,
-} from "../types/device";
-
+import type { FarmingType } from "../types/device";
+import { userMessage } from "../lib/userMessages";
+import { LOCAL_BACKEND_WRITES } from "../services/apiClient";
+import type { ApiDevice } from "../services/detectionService";
 import {
-  addDevice,
-  getDevices,
-} from "../utils/deviceStorage";
+  createDevice,
+  fieldForErrorCode,
+  loadRemovedDevices,
+  normalizeDeviceCode,
+  purgeDevice,
+  validateDeviceInput,
+  type DeviceField,
+} from "../services/deviceService";
 
 export default function AddDevice() {
   const navigate = useNavigate();
 
-  const [deviceCode, setDeviceCode] =
-    useState("");
+  const [deviceCode, setDeviceCode] = useState("");
+  const [deviceName, setDeviceName] = useState("");
+  const [farmingType, setFarmingType] = useState<FarmingType>("caged");
+  const [error, setError] = useState("");
+  const [errorField, setErrorField] = useState<DeviceField | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [created, setCreated] = useState<ApiDevice | null>(null);
+  // Set when the code belongs to one of the user's own removed devices.
+  const [retired, setRetired] = useState<ApiDevice | null>(null);
+  const [purging, setPurging] = useState(false);
 
-  const [deviceName, setDeviceName] =
-    useState("");
+  const listPath = (type: FarmingType) => (type === "caged" ? "/cages" : "/free-range");
 
-  const [farmingType, setFarmingType] =
-    useState<FarmingType>("caged");
+  const clearError = () => {
+    setError("");
+    setErrorField(null);
+    setRetired(null);
+  };
 
-  const [error, setError] =
-    useState("");
+  const submitDevice = async () => {
+    setSubmitting(true);
+    clearError();
+    try {
+      setCreated(await createDevice({ device_code: deviceCode, device_name: deviceName, farming_type: farmingType }));
+    } catch (err) {
+      const code = (err as { code?: string }).code;
+      setError(userMessage(err, "Unable to add the device. Please try again."));
+      setErrorField(fieldForErrorCode(code));
+      if (code === "DEVICE_CODE_RETIRED") {
+        const normalized = normalizeDeviceCode(deviceCode);
+        try {
+          const removed = await loadRemovedDevices();
+          setRetired(removed.find((item) => item.device_code === normalized) ?? null);
+        } catch {
+          setRetired(null);
+        }
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
-  const [
-    showSuccessModal,
-    setShowSuccessModal,
-  ] = useState(false);
-
-  const handleSubmit = (
-    event: FormEvent<HTMLFormElement>
-  ) => {
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-
-    const trimmedCode =
-      deviceCode.trim().toUpperCase();
-
-    const trimmedName =
-      deviceName.trim();
-
-    if (!trimmedCode || !trimmedName) {
-      setError(
-        "Please complete all required fields."
-      );
-
+    if (submitting) return;
+    const invalid = validateDeviceInput(deviceCode, deviceName);
+    if (invalid) {
+      setError(invalid.message);
+      setErrorField(invalid.field);
       return;
     }
-
-    const existingDevices =
-      getDevices();
-
-    const codeExists =
-      existingDevices.some(
-        (device) =>
-          device.device_code
-            .toLowerCase() ===
-          trimmedCode.toLowerCase()
-      );
-
-    if (codeExists) {
-      setError(
-        "This Device ID already exists."
-      );
-
-      return;
-    }
-
-    const newDevice: Device = {
-      device_id: Date.now().toString(),
-
-      device_code: trimmedCode,
-
-      device_name: trimmedName,
-
-      farming_type: farmingType,
-
-      device_status: "offline",
-
-      monitoring_status: "normal",
-
-      normal_count: 0,
-
-      low_count: 0,
-
-      total_count: 0,
-
-      normal_ratio: null,
-
-      low_ratio: null,
-
-      image_url: farmingType === "caged" ? cage01 : freeRange,
-
-      last_updated: "Just added",
-    };
-
-    addDevice(newDevice);
-
-    setDeviceCode(trimmedCode);
-    setDeviceName(trimmedName);
-
-    setShowSuccessModal(true);
+    void submitDevice();
   };
 
-  const handleSuccessClose = () => {
-    setShowSuccessModal(false);
-
-    if (farmingType === "caged") {
-      navigate("/cages");
-    } else {
-      navigate("/free-range");
+  const purgeRetiredAndRetry = async () => {
+    if (!retired) return;
+    setPurging(true);
+    try {
+      await purgeDevice(retired.device_id);
+      setRetired(null);
+      await submitDevice();
+    } catch (err) {
+      setError(userMessage(err, "Unable to delete the old device history. Please try again."));
+    } finally {
+      setPurging(false);
     }
   };
+
+  if (!LOCAL_BACKEND_WRITES) {
+    return (
+      <div className="app">
+        <AppHeader />
+        <main className="dashboard device-form-page">
+          <button className="back-button" onClick={() => navigate(-1)}>← Back</button>
+          <div className="form-card">
+            <h1>Add Device</h1>
+            <p>Adding devices requires the local Backend. Switch to local mode to add a device.</p>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  const inputClass = (field: DeviceField) => (errorField === field ? "input-error" : undefined);
 
   return (
     <div className="app">
       <AppHeader />
 
       <main className="dashboard device-form-page">
-        <button
-          className="back-button"
-          onClick={() => navigate(-1)}
-        >
-          ← Back
-        </button>
+        <button className="back-button" onClick={() => navigate(-1)}>← Back</button>
 
         <div className="form-card">
           <div className="form-header">
             <h1>Add Device</h1>
-
-            <p>
-              Add a new monitoring device to
-              the poultry monitoring system.
-            </p>
+            <p>Register a Raspberry Pi monitoring device using the Device ID printed on it.</p>
           </div>
 
-          <form noValidate
-            className="device-form"
-            onSubmit={handleSubmit}
-          >
+          <form noValidate className="device-form" onSubmit={handleSubmit}>
             <div className="form-group">
-              <label htmlFor="device-code">
-                Device ID
-              </label>
-
+              <label htmlFor="device-code">Device ID</label>
               <input
                 id="device-code"
                 type="text"
-                placeholder={
-                farmingType === "caged"
-                    ? "e.g. PI-005"
-                    : "e.g. FR-002"
-                }
+                className={inputClass("device_code")}
+                aria-invalid={errorField === "device_code"}
+                placeholder={farmingType === "caged" ? "e.g. PI-005" : "e.g. FR-002"}
                 value={deviceCode}
+                disabled={submitting}
                 onChange={(event) => {
-                  setDeviceCode(
-                    event.target.value
-                  );
-
-                  setError("");
+                  setDeviceCode(event.target.value);
+                  clearError();
                 }}
                 required
               />
             </div>
 
             <div className="form-group">
-              <label htmlFor="device-name">
-                Device Name
-              </label>
-
+              <label htmlFor="device-name">Device Name</label>
               <input
                 id="device-name"
                 type="text"
-                placeholder={
-                farmingType === "caged"
-                   ? "e.g. Cage C-05"
-                   : "e.g. Free-range Camera 02"
-                }
+                className={inputClass("device_name")}
+                aria-invalid={errorField === "device_name"}
+                maxLength={64}
+                placeholder={farmingType === "caged" ? "e.g. Cage C-05" : "e.g. Free-range Camera 02"}
                 value={deviceName}
+                disabled={submitting}
                 onChange={(event) => {
-                  setDeviceName(
-                    event.target.value
-                  );
-
-                  setError("");
+                  setDeviceName(event.target.value);
+                  clearError();
                 }}
                 required
               />
             </div>
 
             <div className="form-group">
-              <label>
-                Farming Type
-              </label>
+              <label>Farming Type</label>
+              <p className="form-hint">This cannot be changed after the device is added.</p>
 
               <div className="farming-type-options">
-                <label
-                  className={
-                    farmingType === "caged"
-                      ? "farming-option selected"
-                      : "farming-option"
-                  }
-                >
+                <label className={farmingType === "caged" ? "farming-option selected" : "farming-option"}>
                   <input
                     type="radio"
                     name="farming-type"
-                    checked={
-                      farmingType === "caged"
-                    }
-                    onChange={() =>
-                      setFarmingType("caged")
-                    }
+                    checked={farmingType === "caged"}
+                    disabled={submitting}
+                    onChange={() => setFarmingType("caged")}
                   />
-
                   <div>
-                    <strong>
-                      Caged
-                    </strong>
-
-                    <span>
-                      Monitor chickens in cages.
-                    </span>
+                    <strong>Caged</strong>
+                    <span>Monitor chickens in cages.</span>
                   </div>
                 </label>
 
-                <label
-                  className={
-                    farmingType ===
-                    "free_range"
-                      ? "farming-option selected"
-                      : "farming-option"
-                  }
-                >
+                <label className={farmingType === "free_range" ? "farming-option selected" : "farming-option"}>
                   <input
                     type="radio"
                     name="farming-type"
-                    checked={
-                      farmingType ===
-                      "free_range"
-                    }
-                    onChange={() =>
-                      setFarmingType(
-                        "free_range"
-                      )
-                    }
+                    checked={farmingType === "free_range"}
+                    disabled={submitting}
+                    onChange={() => setFarmingType("free_range")}
                   />
-
                   <div>
-                    <strong>
-                      Free-range
-                    </strong>
-
-                    <span>
-                      Monitor chickens using a camera.
-                    </span>
+                    <strong>Free-range</strong>
+                    <span>Monitor chickens using a camera.</span>
                   </div>
                 </label>
               </div>
             </div>
 
             {error && (
-              <div className="form-error">
+              <div className="form-error" role="alert">
                 {error}
+                {retired && (
+                  <div className="form-error-action">
+                    <p>
+                      “{retired.device_name || retired.device_code}” was removed earlier and its history is still kept.
+                      Deleting that history permanently frees this Device ID.
+                    </p>
+                    <button type="button" className="danger-button" onClick={purgeRetiredAndRetry} disabled={purging || submitting}>
+                      {purging ? "Deleting…" : "Delete old history and add this device"}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
             <div className="form-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() =>
-                  navigate(-1)
-                }
-              >
+              <button type="button" className="secondary-button" onClick={() => navigate(-1)} disabled={submitting}>
                 Cancel
               </button>
-
-              <button
-                type="submit"
-                className="primary-button"
-              >
-                Add Device
+              <button type="submit" className="primary-button" disabled={submitting || purging}>
+                {submitting ? "Adding…" : "Add Device"}
               </button>
             </div>
           </form>
         </div>
       </main>
 
-      {showSuccessModal && (
+      {created && (
         <div className="modal-overlay">
-          <div
-            className="system-modal"
-            role="dialog"
-            aria-modal="true"
-          >
-            <div className="success-icon">
-              ✓
-            </div>
-
-            <h2>
-              Device Added
-            </h2>
-
-            <p>
-              The device has been added
-              successfully.
-            </p>
-
+          <div className="system-modal" role="dialog" aria-modal="true">
+            <div className="success-icon">✓</div>
+            <h2>Device Added</h2>
+            <p>The device shows as Offline until the Raspberry Pi sends its first heartbeat.</p>
             <div className="modal-device-info">
               <span>Device</span>
-
-              <strong>
-                {deviceName}
-              </strong>
-
-              <small>
-                {deviceCode}
-              </small>
+              <strong>{created.device_name || created.device_code}</strong>
+              <small>{created.device_code}</small>
             </div>
-
-            <button
-              className="modal-confirm-button"
-              onClick={handleSuccessClose}
-            >
+            <button className="modal-confirm-button" onClick={() => navigate(listPath(created.farming_type))}>
               Done
             </button>
           </div>

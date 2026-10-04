@@ -1,76 +1,67 @@
 # 系统架构
 
-[返回 README](../README.md) · [数据与同步](DATABASE_AND_SYNC.md)
+[返回 README](../README.md) · [数据与同步](DATABASE_AND_SYNC.md) · [Pi Worker](PI_WORKER.md)
 
 ```mermaid
 flowchart LR
-  W["Web / web/src"] -->|Local + Bearer| B["Backend FastAPI :8006"]
-  M["Mobile / mobile/src"] -->|Local + Bearer| B
-  W -->|Cloud / Auth / Profile| S["Supabase Auth + PostgreSQL + Storage"]
-  M -->|Cloud / Auth / Profile| S
-  M -->|Quick Detection 两种模式均走此路| B
-  B -->|用户验证 + Farm 所有权| S
-  B --> D[("SQLite：设备表 + quick_detections")]
-  B --> I["本地媒体 LOCAL_IMAGE_DIR"]
-  B -->|AIServiceAdapter| A["AI FastAPI :8004"]
-  K["BE-04 Worker"] --> D
+  W["Web"] -->|Local + Bearer| B["Backend FastAPI :8006"]
+  M["Mobile"] -->|Local + Bearer| B
+  W -->|Cloud 模式 / Auth / Profile| S["Supabase Auth + PostgreSQL + Storage"]
+  M -->|Cloud 模式 / Auth / Profile| S
+  P["Raspberry Pi<br/>pi_worker：拍照 + 本地推理"] -->|X-Hardware-Key| B
+  B -->|验证用户 + Farm 所有权| S
+  B -->|添加 / 彻底删除设备（开关开启时）| S
+  B --> D[("SQLite")]
+  B --> I["媒体 LOCAL_IMAGE_DIR"]
+  M -->|Quick Detection| B
+  B -->|Quick Detection| A["AI 服务 :8004"]
+  K["Worker"] --> D
   K --> I
-  K -->|设备数据单向同步| S
-  P["未来 Raspberry Pi 摄像头/调度"] -.-> C["Capture Adapter + Detection Pipeline"]
-  C --> A
-  C --> D
-  C --> I
+  K -->|单向 upsert + tombstone| S
 ```
 
-## 模块职责
+## 模块职责（`backend/app/`）
 
-- `web/src/App.tsx` 与 `mobile/src/app/`：路由、登录保护、页面。API Client 选择 Local/Cloud，账户变化时清空展示并拒绝过期请求结果。
-- `backend/scripts/start_backend.py`：显式环境加载、只读预检、启动所有现有 Router，禁用 legacy 自动初始化。
-- `backend/app/auth.py`：向 Supabase 验证实际 Access Token；`farm_access.py` 将真实 Farm 所有权映射为本地请求 Session 的行过滤及写入检查。
-- `backend/app/services/core_data.py`：设备状态、最新结果、历史及 Dashboard；`detection_pipeline.py`：检测落库、阈值连续性和告警。
-- `capture_adapter.py`：已有 Test File Capture 和未配置边界，不是已完成的 Pi 驱动。
-- `ai_adapter.py`、`inference_media.py`、`detection_annotations.py`：调用真实 AI，校验结果，保存同记录原图及标注图。
-- `quick_detection_service.py`、`quick_deletion.py`：独立手机检测、幂等和失败恢复、所有者媒体清理，不更新设备业务状态。
-- `be04_worker.py`：既有设备数据同步实现；标准 `start_worker.py` 只统一配置和预检，不改变同步规则。
+| 模块 | 职责 |
+|---|---|
+| `auth.py`、`farm_access.py` | 验证 Supabase Token；把用户拥有的 Farm 映射为请求级行过滤（`authorized_db`） |
+| `routers/devices.py` | 设备列表 / 详情 / 历史 / 图片 / 告警；设备增删改；历史删除；创建命令 |
+| `routers/hardware.py` | Pi 接口：心跳、监测配置、是否到点、领取命令、上传结果、完成 / 失败 |
+| `routers/settings_storage.py` | 监测设置、通知设置 |
+| `services/device_management.py` | 设备规则：编号全局唯一、只能改名、软删除、彻底删除 |
+| `services/device_cloud.py` | 设备的同步云端写入（开关 `DEVICE_CLOUD_WRITE_ENABLED`） |
+| `services/detection_deletion.py` | 删除图片 / 记录；30 天图片保留 |
+| `services/hardware_commands.py` | 命令生命周期：原子领取、条件完成、超时失败、防重复 |
+| `services/monitoring_schedule.py`、`monitoring_lease.py` | 是否到采样时间；同一时段只交给一个调用者 |
+| `services/inference_media.py`、`detection_pipeline.py`、`free_range_accumulator.py` | 保存检测和图片、Warning 连续判断与告警、Free-range 快照聚合 |
+| `services/core_data.py` | 设备状态、最新结果、历史、Dashboard |
+| `services/quick_detection_service.py`、`quick_deletion.py` | 手机 Quick Detection |
+| `services/be04_worker.py`、`process_lock.py` | 云同步 Worker；跨平台单实例锁 |
 
-## Local 与 Cloud 访问路径
+`scripts/`：`start_backend.py`（预检 + 启动）、`start_worker.py`、`build_demo_pack.py`、`migrate_device_code_unique.py`。
 
-Local：登录用户 → 带 Bearer 的 Backend 请求 → Supabase Auth 实时验证 → 使用用户 Token 查询其拥有的 Farm → 与本地 Farm UUID 取交集 → 查询 Device/Detection/Alert/Media。图片也需要认证，不是公开静态目录。
+## 主要数据流
 
-Cloud：Web/Mobile `be04CloudApi.ts` → Supabase Auth/REST/Storage → 当前用户 Farm 过滤和 RLS → 短期签名媒体。默认不经过 Backend 的 `/cloud` 代理。`BE04_CLOUD_READ_ENABLED` 只控制可选 Backend 代理及 `/sync/status`，不控制前端直接 Cloud 模式。
+**Run Detection Now**：Web / Mobile `POST /devices/{id}/commands` → Pi 轮询 `commands/claim` 原子领取 → Pi 拍照、本地推理 → 上传 `.../detection` → Backend 保存 Detection 和图片、命令 completed → Mobile 自动轮询、Web 刷新后显示新记录。超时和重试见 [PI_WORKER](PI_WORKER.md)。
 
-两条路径都不把 Demo UUID 当登录身份。用户不拥有 Farm 时为空；Supabase 验证失败不自动回落匿名。当前缓存/请求清理不能使已经发出的 Storage 签名 URL 立刻失效，签名 URL 在过期前仍需当敏感链接处理。
+**自动监测**：Pi 问 `monitoring-due`（Backend 按 Farm 时区和监测设置判断，并占住该时段）→ 到点则拍照推理 → `monitoring-samples`。Cage 每个样本生成一条 scheduled Detection；Free-range 样本在内存中按快照间隔聚合，生成正式 `free_range_snapshot`。Warning 需要连续两次达到阈值。
 
-## Quick Detection 独立数据流
+**设备管理**：见 [DEVICE_MANAGEMENT_API](DEVICE_MANAGEMENT_API.md)。
 
-```mermaid
-sequenceDiagram
-  participant M as Mobile
-  participant B as Backend
-  participant S as Supabase Auth
-  participant A as AI Service
-  participant D as SQLite / Media
-  M->>B: multipart + Bearer + Idempotency-Key
-  B->>S: 验证当前用户
-  B->>B: 校验 JPEG/PNG、大小、EXIF，申请处理 lease
-  B->>D: quick_detections processing
-  B->>A: infer_mode(caged/free_range)
-  A-->>B: 数量、instances、bbox、prob_normal
-  B->>D: 原始上传、方向规范化图、标注图、响应、provenance
-  B-->>M: succeeded / processing / 错误
-  M->>B: 当前用户历史、详情、受保护媒体
-```
+## Local 与 Cloud 访问
 
-同用户相同 request ID 是同一逻辑请求；换内容/模式/来源会冲突。原始字节保留用于 SHA-256，显示原图可能是纠正方向后的版本，以与框坐标一致。失败保留失败状态并清理未完成媒体；不确定提交时不能误删已提交结果。
+Local：带 Bearer 的 Backend 请求 → Supabase 验证 Token → 用该 Token 查询用户拥有的 Farm → 与本地 Farm 取交集 → 只返回这些 Farm 的数据。图片也需要认证。
 
-## 离线与同步
+Cloud：Web / Mobile 直接用 Supabase SDK 读（RLS + 签名 URL），只读；写操作都需要 Local Backend，界面上相应按钮在 Cloud 模式下隐藏。
 
-内部设备采集、AI 推理、SQLite 落库不经过交互用户 Session，可按已有服务设计离线工作；但当前没有已验收的常驻 Pi 调度/摄像头系统。Worker 可以持续运行并在恢复网络后重试，断网时无法完成云端上传，不能称为离线同步成功。用户在 Local 中登录或读取受保护 API 仍需 Supabase 联网验证。
+用户没有 Farm 时看到空列表；Supabase 验证失败不会回落为匿名。
 
-Worker 按 Farm→Device→Detection→Alert 同步，图片在记录发布前上传，使用稳定 UUID/对象路径、指纹和重试账本。Quick Detection 不进入该流程。详见数据文档。
+## 进程与状态
 
-## 硬件及交付边界
+- Backend 只运行一个进程。监测时段占位和 Free-range 聚合在内存中；重启后丢失是安全的（下一次询问重新判断）。
+- 30 天保留和超时命令检查由 Pi 心跳触发，没有单独的调度进程。
+- Worker 是独立进程，每个数据库一个。
 
-Raspberry Pi 后续需要实际 Capture Adapter、心跳、采集调度、Free-range 正式聚合/快照、视频存储生命周期、现场资源限制与网络故障验证。现有 DeviceCommand/VideoSegment 表不等于已有命令消费者或录像服务。不得把多帧识别直接当作独立个体总数。
+## 边界
 
-已有软件入口不负责 TLS、服务守护、外网暴露或自动部署。远程 Quick Detection 需要另行审批的安全 Backend 网络入口。
+Backend 不负责 TLS、守护进程或公网暴露。远程 Quick Detection 需要另行批准的安全入口。Pi 的开机自启尚未提供。

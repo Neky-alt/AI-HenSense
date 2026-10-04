@@ -15,6 +15,7 @@ from app.responses import success
 from app.services.ai_adapter import AIInvalidResponse, normalize_ai_payload
 from app.services.capture_adapter import CapturedFrame
 from app.services.core_data import compute_device_status, utc_iso
+from app.services.detection_deletion import maybe_apply_image_retention
 from app.services.free_range_accumulator import free_range_accumulator
 from app.services.hardware_command_execution import (
     execute_manual_detection_command,
@@ -22,10 +23,12 @@ from app.services.hardware_command_execution import (
 from app.services.hardware_commands import (
     claim_next_command,
     complete_command,
+    expire_stale_commands,
     fail_command,
 )
 from app.services.hardware_config import get_device_monitoring_config
 from app.services.inference_media import persist_inference_media
+from app.services.monitoring_lease import monitoring_leases
 from app.services.monitoring_schedule import evaluate_device_schedule
 
 router = APIRouter(
@@ -150,6 +153,15 @@ def device_heartbeat(
     db.commit()
     db.refresh(device)
 
+    # Recover commands the device abandoned (e.g. it restarted mid-command).
+    try:
+        expire_stale_commands(db, device.device_id)
+    except Exception:
+        db.rollback()
+
+    # Fixed 30-day image retention, throttled to once an hour; never fails the heartbeat.
+    maybe_apply_image_retention(db)
+
     return success(
         {
             "device_id": device.device_id,
@@ -213,18 +225,27 @@ def read_device_monitoring_due(
             detail="Device not found",
         )
 
+    now = utcnow()
     decision = evaluate_device_schedule(
         db,
         device,
-        now=utcnow(),
+        now=now,
     )
+
+    due = decision.due
+    reason = decision.reason
+
+    # Only one caller may take a due slot; others wait for its sample.
+    if due and not monitoring_leases.try_acquire(device.device_id, now=now):
+        due = False
+        reason = "sample_in_progress"
 
     return success(
         {
             "device_id": device.device_id,
             "farming_type": device.farming_type,
-            "due": decision.due,
-            "reason": decision.reason,
+            "due": due,
+            "reason": reason,
             "due_at": (
                 decision.due_at.isoformat(
                     timespec="seconds"
@@ -359,6 +380,19 @@ async def submit_monitoring_sample(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _: None = Depends(require_hardware_key),
+) -> dict:
+    try:
+        return await _process_monitoring_sample(device_id, result_json, file, db)
+    finally:
+        # The slot is either recorded now or failed; let the next due check decide.
+        monitoring_leases.release(device_id)
+
+
+async def _process_monitoring_sample(
+    device_id: str,
+    result_json: str,
+    file: UploadFile,
+    db: Session,
 ) -> dict:
     """
     Receive one automatic monitoring sample inferred locally
@@ -584,4 +618,4 @@ def fail_device_command(
 
     return success(
         _serialize_command(command)
-    )
+    )

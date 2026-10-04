@@ -1,6 +1,6 @@
 import type { Detection } from "../types/detection.ts";
 import type { Device, CaptureSourceType } from "../types/device.ts";
-import { apiGet, apiPost, resolveBackendUrl } from "./apiClient.ts";
+import { apiDelete, apiGet, apiPost, resolveBackendUrl } from "./apiClient.ts";
 
 export interface ApiDetection extends Omit<Detection, "screenshot_url" | "source_type" | "confidence"> {
   capture_source_type: CaptureSourceType;
@@ -107,8 +107,11 @@ export async function loadFreeRangeResults(id: string, signal: AbortSignal): Pro
 /** Both LAN and Supabase remote cloud modes use the same Alert contract. */
 export async function loadAlerts(_id: string, signal: AbortSignal) {
   const devices = await apiGet<ApiDevice[]>("/devices", signal);
-  const groups = await Promise.all(devices.map(device =>
-    apiGet<import("../types/alert.ts").Alert[]>(`/devices/${encodeURIComponent(device.device_id)}/alerts`,signal)));
+  const groups = await Promise.all(devices.map(async (device) => {
+    const alerts = await apiGet<import("../types/alert.ts").Alert[]>(`/devices/${encodeURIComponent(device.device_id)}/alerts`,signal);
+    // Label each alert with its real device name; never a local/mock lookup.
+    return alerts.map((alert) => ({ ...alert, device_name: device.device_name || device.device_code }));
+  }));
   return groups.flat().sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at));
 }
 
@@ -132,4 +135,18 @@ export async function runManualDetection(
       command_type: "manual_detection",
     }
   );
+}
+
+function detectionPath(deviceId: string, detectionId: string): string {
+  return `/devices/${encodeURIComponent(deviceId)}/detections/${encodeURIComponent(detectionId)}`;
+}
+
+/** Deletes the original and annotated image; counts and the record stay. Synced to cloud. */
+export async function deleteDetectionImage(deviceId: string, detectionId: string): Promise<Detection> {
+  return mapDetection(await apiDelete<ApiDetection>(`${detectionPath(deviceId, detectionId)}/image`));
+}
+
+/** Removes the record from History together with its images. Synced to cloud. */
+export function deleteDetectionRecord(deviceId: string, detectionId: string): Promise<{ detection_id: string; deleted: true }> {
+  return apiDelete<{ detection_id: string; deleted: true }>(detectionPath(deviceId, detectionId));
 }

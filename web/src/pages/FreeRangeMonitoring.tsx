@@ -5,6 +5,9 @@ import type { Device, MonitoringStatus } from "../types/device";
 import { loadDevices, loadFreeRangeResults } from "../services/detectionService";
 import { useBackendData } from "../hooks/useBackendData";
 import BackendStatus from "../components/BackendStatus";
+import DeleteDeviceDialog from "../components/DeleteDeviceDialog";
+import { LOCAL_BACKEND_WRITES } from "../services/apiClient";
+import { deleteSuccessMessage, type DeleteMode } from "../services/deviceService";
 import StatusBadge from "../components/StatusBadge";
 import DeviceConnectionStatus from "../components/DeviceConnectionStatus";
 import AppHeader from "../components/AppHeader";
@@ -46,7 +49,7 @@ export default function FreeRangeMonitoring() {
 
   const [selectedDeviceId, setSelectedDeviceId] = useState(filteredFreeRangeDevices[0]?.device_id ?? allFreeRangeDevices[0]?.device_id ?? "");
   const [deviceToDelete, setDeviceToDelete] = useState<Device | null>(null);
-  const [showDeleteSuccess, setShowDeleteSuccess] = useState(false);
+  const [deletedMode, setDeletedMode] = useState<DeleteMode | null>(null);
 
   const camera = filteredFreeRangeDevices.find((device) => device.device_id === selectedDeviceId) ?? filteredFreeRangeDevices[0];
   const results = useBackendData(loadFreeRangeResults, camera?.device_id ?? "");
@@ -62,10 +65,11 @@ export default function FreeRangeMonitoring() {
   };
 
 
-  const confirmDelete = () => {
-    if (!deviceToDelete) return;
-    // No Backend deletion endpoint exists in this read-only integration.
+  const handleDeleted = (mode: DeleteMode) => {
     setDeviceToDelete(null);
+    setDeletedMode(mode);
+    setSelectedDeviceId("");
+    request.retry();
   };
 
   return (
@@ -84,7 +88,7 @@ export default function FreeRangeMonitoring() {
           <div className="page-header-actions">
             <span className="device-total">{allFreeRangeDevices.length} devices</span>
             <button className="secondary-button settings-entry-button" onClick={() => navigate("/settings/free-range", { state: { from: "/free-range" } })}><Icon name="settings" size={16} /> Settings</button>
-            <button className="add-device-button" disabled onClick={() => navigate("/devices/add")} title="Device registration is not connected to the Backend" aria-label="Add Device">+</button>
+            {LOCAL_BACKEND_WRITES && <button className="add-device-button" onClick={() => navigate("/devices/add")} title="Add Device" aria-label="Add Device">+</button>}
           </div>
         </div>
 
@@ -119,8 +123,10 @@ export default function FreeRangeMonitoring() {
                 <div className="free-range-card-header">
                   <div><h2>{camera.device_name}</h2><span className="device-code">{camera.device_code}</span></div>
                   <div className="device-card-actions">
-                    <button className="edit-device-button" disabled title="Device editing is not connected to the Backend" onClick={() => navigate(`/devices/${camera.device_id}/edit`)}>Edit</button>
-                    <button className="delete-device-button" disabled title="Device deletion is not available in the Backend API" onClick={() => setDeviceToDelete(camera)}>Delete</button>
+                    {LOCAL_BACKEND_WRITES && <>
+                      <button className="edit-device-button" onClick={() => navigate(`/devices/${camera.device_id}/edit`)}>Edit</button>
+                      <button className="delete-device-button" onClick={() => setDeviceToDelete(camera)}>Delete</button>
+                    </>}
                     <DeviceConnectionStatus status={camera.device_status} />
                   </div>
                 </div>
@@ -167,8 +173,8 @@ export default function FreeRangeMonitoring() {
         ))}
       </main>
 
-      {deviceToDelete && <div className="modal-overlay"><div className="system-modal" role="dialog" aria-modal="true"><div className="delete-icon">!</div><h2>Delete Device?</h2><p>Are you sure you want to delete this device?</p><div className="modal-device-info"><span>Device</span><strong>{deviceToDelete.device_name}</strong><small>{deviceToDelete.device_code}</small></div><div className="delete-modal-actions"><button className="secondary-button" onClick={() => setDeviceToDelete(null)}>Cancel</button><button className="danger-button" onClick={confirmDelete}>Delete Device</button></div></div></div>}
-      {showDeleteSuccess && <div className="modal-overlay"><div className="system-modal" role="dialog" aria-modal="true"><div className="success-icon">✓</div><h2>Device Deleted</h2><p>The device has been deleted successfully.</p><button className="modal-confirm-button" onClick={() => setShowDeleteSuccess(false)}>Done</button></div></div>}
+      {deviceToDelete && <DeleteDeviceDialog device={deviceToDelete} onCancel={() => setDeviceToDelete(null)} onDeleted={handleDeleted} />}
+      {deletedMode && <div className="modal-overlay"><div className="system-modal" role="dialog" aria-modal="true"><div className="success-icon">✓</div><h2>Device Deleted</h2><p>{deleteSuccessMessage(deletedMode)}</p><button className="modal-confirm-button" onClick={() => setDeletedMode(null)}>Done</button></div></div>}
     </div>
   );
 }

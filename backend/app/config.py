@@ -62,6 +62,15 @@ class Settings(BaseSettings):
     # The final value should be adjusted after benchmarking the real Raspberry Pi.
     FREE_RANGE_SAMPLING_INTERVAL_SECONDS: int = 60
 
+    # Command recovery (P2). A manual command still pending after this long is
+    # failed (the device never picked it up); one still running after
+    # COMMAND_RUNNING_TIMEOUT_SECONDS is failed (the device never reported back).
+    # Running timeout must cover model load + capture + inference on the Pi.
+    COMMAND_PENDING_TIMEOUT_SECONDS: int = 600
+    COMMAND_RUNNING_TIMEOUT_SECONDS: int = 300
+    # How long one "monitoring due" answer reserves the slot for the caller.
+    MONITORING_SAMPLE_LEASE_SECONDS: int = 300
+
     # Camera 硬件实现仍由 Hardware + Development 对接。默认不伪造拍摄结果。
     # 本地真模型联调时显式使用 test_file，并读取下面的测试图片。
     CAPTURE_ADAPTER_MODE: str = "unconfigured"
@@ -70,6 +79,13 @@ class Settings(BaseSettings):
     # Local-first retained Detection Images; media files never belong in SQLite.
     LOCAL_IMAGE_DIR: str = str(BASE_DIR / "local_storage" / "detection_images")
     MAX_DETECTION_IMAGE_BYTES: int = 10 * 1024 * 1024
+
+    # Fixed retention (team decision 2026-10-03): detection images are deleted
+    # automatically after this many days, locally and in the cloud (via Worker
+    # tombstones). Records and counts are kept. Not user-configurable.
+    DETECTION_IMAGE_RETENTION_DAYS: int = 30
+    # How often the heartbeat-triggered retention check may run.
+    IMAGE_RETENTION_CHECK_INTERVAL_MINUTES: int = 60
 
     # ---------- Supabase（BE-04 才会用到，先留空） ----------
     SUPABASE_URL: str = ""
