@@ -1,98 +1,87 @@
-# HenSense 软件交接 v1.0
+# HenSense（Country Watch）
 
-HenSense 是 COMP5703 的家禽监测软件，提供 Web、Mobile、设备检测历史、原图/标注图、告警查看，以及按登录用户隔离的手机 Quick Detection。AI 结果是模型估计，不能作为经过核实的个体产蛋结论。
+HenSense 是 COMP5703 的家禽监测系统：Raspberry Pi 拍照并在本地运行 AI，Backend 保存检测结果，Web / Mobile 查看监测、历史、告警，并管理设备。AI 结果是模型估计，不能作为经过核实的个体产蛋结论。
 
 ## 从哪里开始
 
-1. 先读 [部署指南](docs/DEPLOYMENT.md)，准备依赖、Supabase 和私下交接资源。
-2. 按 [交接清单](docs/HANDOVER.md) 确认权限、交付文件和演示数据。
-3. 操作人员使用 [用户手册](docs/USER_GUIDE.md)，开发人员使用 [架构](docs/ARCHITECTURE.md) 和 [API 参考](docs/API_REFERENCE.md)。
+1. [部署指南](docs/DEPLOYMENT.md)：安装依赖、配置 Supabase、生成演示数据包、启动服务。
+2. [交接清单](docs/HANDOVER.md)：当前完成情况、新队友检查表、未决问题。
+3. 操作人员看 [用户手册](docs/USER_GUIDE.md)；开发人员看 [架构](docs/ARCHITECTURE.md)、[API 参考](docs/API_REFERENCE.md) 和 [Pi Worker](docs/PI_WORKER.md)。
 
-本文档描述当前本地代码的**拟发布版本**，不表示所有文件已进入 GitHub。重新建立干净 main 前，必须按交付清单纳入源码、启动脚本、测试、资源和文档；不能只提交文档。本阶段不操作 Git 历史。
-
-## 技术栈与结构
+## 结构
 
 | 目录 | 技术与职责 |
 |---|---|
-| `web/` | React、TypeScript、Vite；监测、历史、账户页面 |
-| `mobile/` | Expo SDK 57、React Native、Expo Router；监测、拍照/相册 Quick Detection |
-| `backend/` | FastAPI、SQLAlchemy、SQLite；权限、设备数据、Quick Detection、媒体、同步服务 |
-| `ai_service/hen_repro/` | PyTorch、Ultralytics、ProtoMIL、FastAPI；Caged / Free-range 推理 |
-| `docs/` | 正式中文交接文档及保留的中文需求/架构/接口原件 |
-| Supabase | Auth、PostgreSQL、私有 Storage；云端监测与账户服务 |
+| `backend/` | FastAPI、SQLAlchemy、SQLite；权限、设备管理、检测与告警、设置、媒体、硬件接口、云同步 Worker |
+| `pi_worker/` | Raspberry Pi 端：心跳、领取命令、拍照、本地 YOLO + ProtoMIL 推理、上传结果 |
+| `web/` | React、TypeScript、Vite；监测、设备管理、历史、设置、账户 |
+| `mobile/` | Expo、React Native；监测、Quick Detection（Mobile 组维护） |
+| `ai_service/hen_repro/` | 独立 AI 服务；只给 Quick Detection 和 Backend `/detect` 使用 |
+| `docs/` | 正式中文文档 |
+| Supabase | Auth、PostgreSQL、私有 Storage；云端数据和登录 |
 
-## 环境与资源
+## 快速启动（依赖和配置已就绪后）
 
-已验证环境为 Node 24.20.0、Python 3.14.3；Web/Mobile 使用各自 lockfile。AI 依赖部分未锁定，其他 Mac 的全新安装仍需验证。首次 iPhone 开发客户端需要 Xcode、签名权限和本机编译；已有客户端不等于可交给所有队友安装。
+Backend（Windows `cmd`；macOS 把 `.venv\Scripts\python` 换成 `.venv/bin/python`）：
 
-仓库提供代码和配置模板，**不提供**真实密钥、SQLite、个人上传图片、正式媒体、模型权重或签名材料。无数据库时可按部署指南显式创建全新空库；它不会产生 Farm、设备或 Demo 数据。无权访问 Farm 的账户应看到空状态。
-
-## 快速启动
-
-先完成 [首次部署](docs/DEPLOYMENT.md)；以下是依赖和配置齐备后的日常命令。每个命令组从仓库根目录打开独立终端执行：
-
-```sh
+```bat
 cd backend
-.venv/bin/python -m scripts.start_backend --check
-.venv/bin/python -m scripts.start_backend
+.venv\Scripts\python -m scripts.start_backend --check
+.venv\Scripts\python -m scripts.start_backend
 ```
 
-```sh
-cd ai_service/hen_repro
-.venv/bin/python start_service.py
-```
+Web：
 
-```sh
+```bat
 cd web
 npm run dev
 ```
 
-```sh
-cd mobile
-export METRO_PORT=8081
-npx expo start --dev-client --lan --port "$METRO_PORT"
+Pi Worker 见 [PI_WORKER](docs/PI_WORKER.md)；Mobile 见 Mobile 组说明。固定端口：Backend **8006**、AI **8004**、Web **5173**、Metro **8081**。Backend 只接受已存在的数据库和媒体目录，禁止 `--reload` 和启动时自动迁移。
+
+## 功能概览
+
+- 登录、注册、密码恢复、Profile（Supabase）。
+- Cage / Free-range 监测、设备详情、检测历史、原图 / 标注图、告警列表；Offline 设备显示 `Last Recorded Result`。
+- **设备管理**：添加（Device ID 全局唯一）、改名、移除（保留历史）、移除并删除全部历史（本地 + 云端）。
+- **Run Detection Now**：Web / Mobile 发命令 → Pi 拍照并本地推理 → Backend 保存 → 页面显示。命令有超时和防重复。
+- **自动监测**：Cage 按设置的时间 / 间隔采样；Free-range 按快照间隔生成正式 Snapshot。
+- **设置**：Cage / Free-range 监测设置、In-app 告警开关，都保存在 Backend。
+- **历史删除**：删除单张图片或整条记录，同步到云端。
+- **图片保留**：检测图片固定保留 30 天，到期自动删除（Pi SD 卡、Backend 媒体、云端副本），记录和数量保留。
+- Mobile Quick Detection：手机拍照上传检测，独立历史，不影响设备统计。
+
+尚未完成：Pi 开机自启（systemd）、模型缓存、多人共享 Farm、邮件 / Push 通知、公网部署。详见 [交接清单](docs/HANDOVER.md)。
+
+## 测试
+
+```bat
+cd backend
+set DATABASE_URL=sqlite:///:memory:
+.venv\Scripts\python -m pytest -q
 ```
 
-固定规划：Backend **8006**、AI **8004**、Web **5173**、Metro **8081**。Worker 没有监听端口，启用前单独核对同步授权。Backend 只接受显式的既有数据库/媒体路径，禁止 reload 和启动自动迁移。
-
-## 功能概览与边界
-
-- Web/Mobile：登录、注册、密码恢复、用户 Profile、真实监测、检测历史、原图/标注图、正式 Alerts 页面。
-- Offline 设备保留 `Last Recorded Result`；Home Summary 不把离线历史当实时监测。
-- Free-range 的正式 `Latest Snapshot` 与 `Latest Manual Detection` 分离；单帧结果不是整个鸡群统计。
-- Mobile Quick Detection：拍照/选图、真实 AI、幂等重试、独立历史和删除，不影响设备统计或告警。
-- Local 交互访问需要 Supabase 联网验证；设备侧内部采集/推理/SQLite 保存不依赖交互登录，Worker 断网时不能上传，恢复后重试。
-- Cloud 监测可直接访问 Supabase；**Quick Detection 的远程上传仍需可达 Backend，Backend 需可达 AI**。历史读取不需重新推理。
-- 设备新增/编辑、Settings 等部分界面仍是浏览器原型或 Mobile 只读；不是已完成的设备配置部署。Web 顶部提醒仍有原型数据，详见用户手册和已知限制。
-- Raspberry Pi 摄像头、持续调度、硬件端指令及现场部署不在本次软件验收范围。
-
-## 测试与文档导航
-
-每组命令在对应目录执行，勿对正式库运行测试：
-
-```sh
+```bat
 cd web
 npm test
 npm run build
 ```
 
-```sh
-cd mobile
-npm test
-npm run typecheck
-```
+详细范围和 Windows 注意事项见 [测试说明](docs/TESTING.md)。
 
-Backend 的安全回归命令及历史验证证据见 [测试说明](docs/TESTING.md)。
+## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [DEPLOYMENT](docs/DEPLOYMENT.md) | 全新部署、初始化、运行、停止、排错 |
-| [USER_GUIDE](docs/USER_GUIDE.md) | 中文操作说明与实际英文界面名称 |
-| [ARCHITECTURE](docs/ARCHITECTURE.md) | 模块、访问路径、检测及同步流程 |
-| [API_REFERENCE](docs/API_REFERENCE.md) | 全部 Router、认证、参数、返回与错误 |
-| [DATABASE_AND_SYNC](docs/DATABASE_AND_SYNC.md) | 表、媒体、权限、离线与 Worker |
-| [CLOUD_HANDOVER](docs/CLOUD_HANDOVER.md) | 团队权限、Farm 权限、密钥和账户交接 |
-| [TESTING](docs/TESTING.md) | 已执行检查、人工验收、后续测试 |
-| [HANDOVER](docs/HANDOVER.md) | 新队友检查表、GitHub 清单、私下资源、未决项 |
+| [DEPLOYMENT](docs/DEPLOYMENT.md) | 安装、配置、演示数据包、启动、排错 |
+| [USER_GUIDE](docs/USER_GUIDE.md) | 操作说明（保留英文界面名称） |
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | 模块、数据流、Local / Cloud 访问 |
+| [API_REFERENCE](docs/API_REFERENCE.md) | 全部 Backend 路由、认证、错误码 |
+| [DEVICE_MANAGEMENT_API](docs/DEVICE_MANAGEMENT_API.md) | 设备增删改的规则、错误码、云端一致性、Mobile 接入 |
+| [PI_WORKER](docs/PI_WORKER.md) | Pi 配置、运行、硬件接口、命令生命周期 |
+| [DATABASE_AND_SYNC](docs/DATABASE_AND_SYNC.md) | 表、媒体、删除与保留、Worker 同步 |
+| [CLOUD_HANDOVER](docs/CLOUD_HANDOVER.md) | Supabase 权限、密钥、管理员待办 |
+| [TESTING](docs/TESTING.md) | 自动化测试、人工验收清单 |
+| [HANDOVER](docs/HANDOVER.md) | 交付状态、检查表、私下资源、未决项 |
 
-历史运行/验收资料保留，但不是正式启动依据；本套九份文档是交接阅读主线。
+仓库不包含真实密钥、SQLite、媒体、模型权重或签名材料。

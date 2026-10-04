@@ -10,6 +10,9 @@ import { MONITORING_STATUS_OPTIONS } from "../config/monitoringStatus";
 import { loadDevices } from "../services/detectionService";
 import { useBackendData } from "../hooks/useBackendData";
 import BackendStatus from "../components/BackendStatus";
+import DeleteDeviceDialog from "../components/DeleteDeviceDialog";
+import { LOCAL_BACKEND_WRITES } from "../services/apiClient";
+import { deleteSuccessMessage, type DeleteMode } from "../services/deviceService";
 
 type Filter = "all" | MonitoringStatus | "offline";
 type SortMode = "default" | "low-desc" | "low-asc" | "name-asc" | "name-desc";
@@ -42,7 +45,7 @@ export default function CageMonitoring() {
   const request = useBackendData(loadDevices);
   const deviceList = useMemo(() => request.data ?? [], [request.data]);
   const [deviceToDelete, setDeviceToDelete] = useState<Device | null>(null);
-  const [showDeleteSuccess, setShowDeleteSuccess] = useState(false);
+  const [deletedMode, setDeletedMode] = useState<DeleteMode | null>(null);
 
   const cageDevices = useMemo(() => {
     const filtered = deviceList.filter((device) => {
@@ -86,10 +89,10 @@ export default function CageMonitoring() {
     setSearchParams(next);
   };
 
-  const confirmDelete = () => {
-    if (!deviceToDelete) return;
-    // No Backend deletion endpoint exists in this read-only integration.
+  const handleDeleted = (mode: DeleteMode) => {
     setDeviceToDelete(null);
+    setDeletedMode(mode);
+    request.retry();
   };
 
   return (
@@ -110,7 +113,7 @@ export default function CageMonitoring() {
             <button className="secondary-button settings-entry-button" onClick={() => navigate("/settings/cage", { state: { from: "/cages" } })}>
               <Icon name="settings" size={16} /> Settings
             </button>
-            <button className="add-device-button" disabled onClick={() => navigate("/devices/add")} title="Device registration is not connected to the Backend" aria-label="Add Device">+</button>
+            {LOCAL_BACKEND_WRITES && <button className="add-device-button" onClick={() => navigate("/devices/add")} title="Add Device" aria-label="Add Device">+</button>}
           </div>
         </div>
 
@@ -145,11 +148,11 @@ export default function CageMonitoring() {
       </main>
 
       {deviceToDelete && (
-        <div className="modal-overlay"><div className="system-modal" role="dialog" aria-modal="true"><div className="delete-icon">!</div><h2>Delete Device?</h2><p>Are you sure you want to delete this device?</p><div className="modal-device-info"><span>Device</span><strong>{deviceToDelete.device_name}</strong><small>{deviceToDelete.device_code}</small></div><div className="delete-modal-actions"><button className="secondary-button" onClick={() => setDeviceToDelete(null)}>Cancel</button><button className="danger-button" onClick={confirmDelete}>Delete Device</button></div></div></div>
+        <DeleteDeviceDialog device={deviceToDelete} onCancel={() => setDeviceToDelete(null)} onDeleted={handleDeleted} />
       )}
 
-      {showDeleteSuccess && (
-        <div className="modal-overlay"><div className="system-modal" role="dialog" aria-modal="true"><div className="success-icon">✓</div><h2>Device Deleted</h2><p>The device has been deleted successfully.</p><button className="modal-confirm-button" onClick={() => setShowDeleteSuccess(false)}>Done</button></div></div>
+      {deletedMode && (
+        <div className="modal-overlay"><div className="system-modal" role="dialog" aria-modal="true"><div className="success-icon">✓</div><h2>Device Deleted</h2><p>{deleteSuccessMessage(deletedMode)}</p><button className="modal-confirm-button" onClick={() => setDeletedMode(null)}>Done</button></div></div>
       )}
     </div>
   );

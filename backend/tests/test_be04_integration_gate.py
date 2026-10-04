@@ -27,17 +27,19 @@ class IntegrationGateTests(unittest.TestCase):
 
 class WorkerEntryTests(unittest.TestCase):
     def test_cli_safety_guards(self):
-        import fcntl
         import os
+        from app.services.process_lock import try_lock
         from pathlib import Path
         import sqlite3
         import subprocess
         import sys
         import tempfile
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             db = Path(tmp) / 'worker.db'
-            with sqlite3.connect(db) as conn:
-                conn.execute('CREATE TABLE detections(sync_status TEXT)')
+            conn = sqlite3.connect(db)
+            conn.execute('CREATE TABLE detections(sync_status TEXT)')
+            conn.commit()
+            conn.close()
             before = db.read_bytes()
             env = dict(os.environ, DATABASE_URL=f'sqlite:///{db}', LOCAL_IMAGE_DIR=tmp)
             args = [sys.executable, '-m', 'scripts.be04_worker', '--db', str(db),
@@ -51,7 +53,7 @@ class WorkerEntryTests(unittest.TestCase):
             self.assertIn('Worker DB does not match', result.stderr)
             self.assertNotEqual(result.returncode, 0)
             with db.with_suffix('.db.be04.lock').open('a+') as lock:
-                fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.assertTrue(try_lock(lock))
                 result = subprocess.run(args + ['--apply'], env=env, capture_output=True, text=True)
                 self.assertIn('already running', result.stderr)
                 self.assertNotEqual(result.returncode, 0)

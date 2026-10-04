@@ -4,7 +4,7 @@ from enum import Enum
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -44,6 +44,20 @@ from app.services.detection_images import (
     resolve_image_path,
 )
 from app.services.detection_pipeline import record_detection_failure
+from app.services.detection_deletion import (
+    DetectionNotFound,
+    delete_detection_image,
+    delete_detection_record,
+)
+from app.services.device_cloud import get_device_cloud
+from app.services.device_management import (
+    DeviceError,
+    create_device,
+    list_removed_devices,
+    purge_device,
+    remove_device,
+    rename_device,
+)
 from app.services.hardware_commands import (
     create_manual_detection_command,
 )
@@ -71,6 +85,29 @@ class DeviceSort(str, Enum):
 
 class DeviceCommandCreatePayload(BaseModel):
     command_type: CommandType
+
+
+class DeviceCreatePayload(BaseModel):
+    # Optional at the schema level so missing/blank fields get the specific
+    # INVALID_* codes from device_management instead of a generic 422.
+    device_code: str | None = None
+    device_name: str | None = None
+    farming_type: str | None = None
+    farm_id: str | None = None
+
+
+class DeviceRenamePayload(BaseModel):
+    # R2: only the name can change; any other field -> 422 VALIDATION_ERROR.
+    model_config = ConfigDict(extra="forbid")
+
+    device_name: str | None = None
+
+
+def _device_error(exc: DeviceError) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=failure(exc.code, exc.message),
+    )
 
 
 def _active_device_or_404(
@@ -246,6 +283,74 @@ def list_devices(
     )
 
 
+@router.post(
+    "",
+    summary="Add a device",
+    status_code=201,
+)
+def add_device(
+    payload: DeviceCreatePayload,
+    db: Session = Depends(authorized_db),
+    cloud=Depends(get_device_cloud),
+):
+    try:
+        data = create_device(
+            db,
+            cloud,
+            device_code=payload.device_code,
+            device_name=payload.device_name,
+            farming_type=payload.farming_type,
+            farm_id=payload.farm_id,
+        )
+    except DeviceError as exc:
+        return _device_error(exc)
+    return JSONResponse(status_code=201, content=success(data))
+
+
+@router.get(
+    "/removed",
+    summary="List removed (soft-deleted) devices",
+)
+def get_removed_devices(
+    db: Session = Depends(authorized_db),
+) -> dict:
+    return success(list_removed_devices(db))
+
+
+@router.patch(
+    "/{device_id}",
+    summary="Rename a device",
+)
+def patch_device(
+    device_id: str,
+    payload: DeviceRenamePayload,
+    db: Session = Depends(authorized_db),
+    cloud=Depends(get_device_cloud),
+):
+    try:
+        return success(rename_device(db, cloud, device_id, payload.device_name))
+    except DeviceError as exc:
+        return _device_error(exc)
+
+
+@router.delete(
+    "/{device_id}",
+    summary="Remove a device (soft) or remove it with all history (purge_history=true)",
+)
+def delete_device(
+    device_id: str,
+    purge_history: bool = Query(default=False),
+    db: Session = Depends(authorized_db),
+    cloud=Depends(get_device_cloud),
+):
+    try:
+        if purge_history:
+            return success(purge_device(db, cloud, device_id))
+        return success(remove_device(db, cloud, device_id))
+    except DeviceError as exc:
+        return _device_error(exc)
+
+
 @router.get(
     "/{device_id}",
     summary="Get device detail",
@@ -387,6 +492,39 @@ def get_annotated_image(
         db,
         annotated=True,
     )
+
+
+@router.delete(
+    "/{device_id}/detections/{detection_id}/image",
+    summary="Delete a detection's images (record and counts are kept)",
+)
+def delete_history_image(
+    device_id: str,
+    detection_id: str,
+    db: Session = Depends(authorized_db),
+) -> dict:
+    _active_device_or_404(db, device_id)
+    try:
+        detection = delete_detection_image(db, device_id, detection_id)
+    except DetectionNotFound:
+        raise HTTPException(status_code=404, detail="Detection not found") from None
+    return success(serialize_detection(detection))
+
+
+@router.delete(
+    "/{device_id}/detections/{detection_id}",
+    summary="Delete a detection record from History (soft delete, synced to cloud)",
+)
+def delete_history_record(
+    device_id: str,
+    detection_id: str,
+    db: Session = Depends(authorized_db),
+) -> dict:
+    _active_device_or_404(db, device_id)
+    try:
+        return success(delete_detection_record(db, device_id, detection_id))
+    except DetectionNotFound:
+        raise HTTPException(status_code=404, detail="Detection not found") from None
 
 
 def _detection_media(

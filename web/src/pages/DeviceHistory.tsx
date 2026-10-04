@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import AppHeader from "../components/AppHeader";
 import { detectionTriggerLabel } from "../utils/detectionDisplay";
 import { MONITORING_STATUS_LABEL } from "../config/monitoringStatus";
-import { loadDevice, loadDetections } from "../services/detectionService";
+import { deleteDetectionImage, deleteDetectionRecord, loadDetections, loadDevice } from "../services/detectionService";
+import { LOCAL_BACKEND_WRITES } from "../services/apiClient";
+import { userMessage } from "../lib/userMessages";
 import { useBackendData } from "../hooks/useBackendData";
 import BackendStatus from "../components/BackendStatus";
 
@@ -33,11 +35,19 @@ export default function DeviceHistory() {
   const [page, setPage] = useState(1);
   const [deleteAction, setDeleteAction] = useState<DeleteAction>(null);
   const [toast, setToast] = useState<ToastState>(null);
+  const [deleting, setDeleting] = useState(false);
   const deviceRequest = useBackendData(loadDevice, id);
   const historyRequest = useBackendData(loadDetections, id);
   const device = deviceRequest.data;
   const detections = historyRequest.data ?? [];
   const loading = deviceRequest.loading || historyRequest.loading;
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 3600);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
   const error = deviceRequest.error || historyRequest.error;
   if (loading || error) return <div className="app"><AppHeader /><main className="dashboard"><button className="back-button" onClick={() => navigate(`/devices/${id}`)}>← Back</button><BackendStatus loading={loading} error={error} retry={() => { deviceRequest.retry(); historyRequest.retry(); }} /></main></div>;
 
@@ -65,11 +75,25 @@ export default function DeviceHistory() {
     setDeleteAction({ type: "record", detectionId, detectedAt });
   };
 
-  const confirmDelete = () => {
-    if (!deleteAction) return;
-
-    setToast({ type: "error", message: "Detection deletion is unavailable: the Backend does not provide a deletion endpoint." });
-    setDeleteAction(null);
+  const confirmDelete = async () => {
+    if (!deleteAction || deleting) return;
+    setDeleting(true);
+    try {
+      if (deleteAction.type === "image") {
+        await deleteDetectionImage(device.device_id, deleteAction.detectionId);
+        setToast({ type: "success", message: "Detection image deleted." });
+      } else {
+        await deleteDetectionRecord(device.device_id, deleteAction.detectionId);
+        setToast({ type: "success", message: "Detection record deleted." });
+      }
+      setDeleteAction(null);
+      historyRequest.retry();
+    } catch (err) {
+      setToast({ type: "error", message: userMessage(err, "Unable to delete. Please try again.") });
+      setDeleteAction(null);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -109,10 +133,9 @@ export default function DeviceHistory() {
                       View
                     </Link>
                     {detection.screenshot_url ? (
-                      <button
+                      LOCAL_BACKEND_WRITES && <button
                         type="button"
                         className="history-action-button"
-                        disabled title="Deletion is unavailable in the current Backend API"
                         onClick={() => requestDeleteImage(detection.detection_id, detection.detected_at)}
                       >
                         Delete image
@@ -120,14 +143,13 @@ export default function DeviceHistory() {
                     ) : (
                       <span className="history-image-missing">Image unavailable</span>
                     )}
-                    <button
+                    {LOCAL_BACKEND_WRITES && <button
                       type="button"
                       className="history-action-button danger"
-                      disabled title="Deletion is unavailable in the current Backend API"
                       onClick={() => requestDeleteRecord(detection.detection_id, detection.detected_at)}
                     >
                       Delete record
-                    </button>
+                    </button>}
                   </div>
                 </div>
               ))}
@@ -159,8 +181,8 @@ export default function DeviceHistory() {
               <h2>{deleteAction.type === "image" ? "Delete Detection Image?" : "Delete Detection Record?"}</h2>
               <p>
                 {deleteAction.type === "image"
-                  ? "This will permanently remove the stored detection image. Counts, ratios, status and timestamp will remain in Detection History."
-                  : "This will permanently delete the detection record and its associated detection image. Original video files will not be deleted."}
+                  ? "This permanently removes the original and annotated images, on this system and in the cloud. Counts, ratios, status and timestamp stay in Detection History."
+                  : "This removes the record from Detection History and permanently deletes its images, on this system and in the cloud."}
               </p>
               <div className="modal-device-info">
                 <span>Detection time</span>
@@ -168,9 +190,9 @@ export default function DeviceHistory() {
                 <small>{device.device_name}</small>
               </div>
               <div className="delete-modal-actions">
-                <button className="secondary-button" onClick={() => setDeleteAction(null)}>Cancel</button>
-                <button className="danger-button" onClick={confirmDelete}>
-                  {deleteAction.type === "image" ? "Delete Image" : "Delete Record"}
+                <button className="secondary-button" onClick={() => setDeleteAction(null)} disabled={deleting}>Cancel</button>
+                <button className="danger-button" onClick={confirmDelete} disabled={deleting}>
+                  {deleting ? "Deleting…" : deleteAction.type === "image" ? "Delete Image" : "Delete Record"}
                 </button>
               </div>
             </div>

@@ -74,9 +74,12 @@ def test_media_persistence_and_ownership_tombstones(media_env):
     assert client.get(data['image_url']).content==frame().content
     assert client.get(data['annotated_image_url']).status_code==200
     assert client.get(data['annotated_image_url'].replace(did,'wrong')).status_code==404
+    # Each request's authorized_db detaches loaded rows; re-load before changing them.
+    d=db.get(Detection,data['detection_id'])
     d.annotated_image_path='../../.env'; db.commit()
     assert client.get(data['annotated_image_url']).status_code==404
     from app.models import utcnow
+    d=db.get(Detection,data['detection_id'])
     d.image_deleted_at=utcnow();db.commit()
     assert client.get(data['image_url']).status_code==404
     assert client.get(data['annotated_image_url']).status_code==404

@@ -3,6 +3,7 @@ from pathlib import Path
 import sqlite3
 import pytest
 from scripts import db01_copy_migration as migration
+from tests._platform import requires_symlinks
 
 
 @pytest.fixture
@@ -37,6 +38,7 @@ def test_existing_backup_is_not_overwritten(legacy):
     assert (out/'sentinel').read_text()=='keep'
 
 
+@requires_symlinks
 def test_working_db_cannot_alias_source(legacy):
     source,media,out=legacy;migration.make_backup(source,media,out)
     (out/'working/database.sqlite3').unlink()

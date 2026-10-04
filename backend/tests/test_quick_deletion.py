@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.quick_models import QuickDetection
 from app.auth import current_user
 from tests.test_quick_detection import env, upload, photo, USER, OTHER
+from tests._platform import requires_symlinks
 
 def endpoint(record):return '/api/v1/quick-detections/'+record['quick_detection_id']
 
@@ -59,6 +60,7 @@ def test_cleanup_failure_retry_is_owner_scoped(env,monkeypatch):
  assert c.delete(endpoint(r)).status_code==200
  assert not [p for p in (root/'media').rglob('*') if p.is_file()]
 
+@requires_symlinks
 def test_unsafe_media_and_symlinks_rejected(env):
  c,_,engine,_,root=env;r=upload(c).json()['data'];outside=root/'outside';outside.write_bytes(b'keep')
  with Session(engine) as db:

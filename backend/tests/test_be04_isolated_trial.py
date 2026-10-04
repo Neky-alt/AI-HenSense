@@ -22,11 +22,14 @@ class IsolationTests(unittest.TestCase):
         self.fixture = WorkerTests('test_dry_run_read_only_and_real_sync')
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
-        self.tmp=tempfile.TemporaryDirectory()
+        # Windows keeps SQLite files locked until every handle is closed; never fail on cleanup.
+        self.tmp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.tmp.cleanup)
         self.base=Path(self.tmp.name)
         self.src=self.base/'source.sqlite'
-        self.fixture.conn.backup(sqlite3.connect(self.src))
+        target=sqlite3.connect(self.src)
+        self.fixture.conn.backup(target)
+        target.close()
         with sqlite3.connect(self.src) as conn:
             # Add source profile table absent from worker fake's minimal schema.
             conn.execute('CREATE TABLE profiles (user_id TEXT PRIMARY KEY, display_name TEXT, created_at TEXT, updated_at TEXT)')

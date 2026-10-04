@@ -50,3 +50,5 @@ yarl==1.24.5
 Pillow==12.3.0
 
 python-multipart==0.0.32
+
+tzdata

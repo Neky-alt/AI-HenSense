@@ -4,6 +4,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import AppHeader from "../components/AppHeader";
 import Icon from "../components/Icon";
 import InfoTooltip from "../components/InfoTooltip";
+import { userMessage } from "../lib/userMessages";
 import {
   getFreeRangeMonitoringSettings,
   updateFreeRangeMonitoringSettings,
@@ -50,6 +51,8 @@ export default function FreeRangeSettings() {
       setSnapshotFrequencyValue(presentation.value);
       setSnapshotFrequencyUnit(presentation.unit);
       setLowCountValue(String(loaded.lowCountWarningThreshold));
+    }).catch((err) => {
+      setToast({ type: "error", message: userMessage(err, "Unable to load settings. Please refresh.") });
     });
   }, []);
 
@@ -137,7 +140,12 @@ export default function FreeRangeSettings() {
       lowCountWarningThreshold: lowCount,
     };
 
-    await updateFreeRangeMonitoringSettings(nextSettings);
+    try {
+      await updateFreeRangeMonitoringSettings(nextSettings);
+    } catch (err) {
+      setToast({ type: "error", message: userMessage(err, "Settings were not saved. Please try again.") });
+      return;
+    }
     setSettings(nextSettings);
     setToast({ type: "success", message: "Settings saved." });
   };
