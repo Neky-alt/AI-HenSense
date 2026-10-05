@@ -5,9 +5,27 @@ from __future__ import annotations
 import time
 
 from backend_client import BackendClient, BackendClientError
-from camera import CameraError, capture_image
+from camera import CameraError, capture_image, prune_old_captures
 from config import PiWorkerConfig, load_config
 from inference import LocalInferenceEngine, LocalInferenceError
+
+CAPTURE_PRUNE_INTERVAL_SECONDS = 3600
+UPLOAD_RETRY_DELAYS_SECONDS = (2, 5, 10)
+
+
+def with_retries(action, description: str):
+    """Run an upload, retrying network / 5xx failures. 4xx is final (e.g. 409 = the
+    Backend already finished or timed out this command)."""
+
+    for attempt, delay in enumerate((0, *UPLOAD_RETRY_DELAYS_SECONDS), start=1):
+        if delay:
+            time.sleep(delay)
+        try:
+            return action()
+        except BackendClientError as exc:
+            if not exc.retryable or attempt > len(UPLOAD_RETRY_DELAYS_SECONDS):
+                raise
+            print(f"[Pi Worker] {description} failed (attempt {attempt}), retrying: {exc}")
 
 
 def handle_manual_detection(
@@ -52,10 +70,13 @@ def handle_manual_detection(
             "[Pi Worker] Uploading result to Backend..."
         )
 
-        response = client.submit_detection_result(
-            command_id,
-            image_path,
-            result,
+        response = with_retries(
+            lambda: client.submit_detection_result(
+                command_id,
+                image_path,
+                result,
+            ),
+            "Detection upload",
         )
 
         print(
@@ -66,7 +87,12 @@ def handle_manual_detection(
     except (
         CameraError,
         LocalInferenceError,
+        BackendClientError,
     ) as exc:
+        if isinstance(exc, BackendClientError) and exc.status_code == 409:
+            # Backend already closed this command (completed or timed out).
+            print(f"[Pi Worker] Command no longer running: {exc}")
+            raise
         print(
             f"[Pi Worker] Local execution failed: "
             f"{exc}"
@@ -129,9 +155,12 @@ def run_automatic_monitoring_sample(
         "[Pi Worker] Uploading monitoring sample..."
     )
 
-    response = client.submit_monitoring_sample(
-        image_path,
-        result,
+    response = with_retries(
+        lambda: client.submit_monitoring_sample(
+            image_path,
+            result,
+        ),
+        "Monitoring sample upload",
     )
 
     print(
@@ -258,7 +287,16 @@ def run_forever() -> None:
         f"{config.poll_interval_seconds} seconds"
     )
 
+    last_prune = 0.0
+
     while True:
+        # Fixed 30-day capture retention on the SD card, checked once an hour.
+        if time.monotonic() - last_prune >= CAPTURE_PRUNE_INTERVAL_SECONDS or last_prune == 0.0:
+            last_prune = time.monotonic()
+            removed = prune_old_captures()
+            if removed:
+                print(f"[Pi Worker] Deleted {removed} captures older than 30 days")
+
         try:
             run_cycle(
                 client,
@@ -306,4 +344,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main()

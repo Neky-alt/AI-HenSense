@@ -7,9 +7,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.auth import current_user
 from app.database import get_db
+from app.farm_access import owned_cloud_farms
 from app.main import app
-from scripts.seed_web_stage1_demo import create_demo, demo_png
+from scripts.seed_web_stage1_demo import create_demo, demo_id, demo_png
 
 
 @pytest.fixture
@@ -27,10 +29,14 @@ def demo(tmp_path, monkeypatch):
             yield db
 
     app.dependency_overrides[get_db] = session
+    # Read APIs require the verified farm owner; the demo seeds a deterministic owner.
+    app.dependency_overrides[current_user] = lambda: demo_id("user")
+    app.dependency_overrides[owned_cloud_farms] = lambda: [demo_id("farm")]
     try:
         yield TestClient(app), manifest
     finally:
-        app.dependency_overrides.pop(get_db, None)
+        for dependency in (get_db, current_user, owned_cloud_farms):
+            app.dependency_overrides.pop(dependency, None)
         engine.dispose()
 
 

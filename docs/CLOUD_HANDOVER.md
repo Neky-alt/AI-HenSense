@@ -29,11 +29,22 @@
 
 客户端使用 `VITE_SUPABASE_URL`/`VITE_SUPABASE_PUBLISHABLE_KEY` 和 `EXPO_PUBLIC_SUPABASE_URL`/`EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`。Backend 使用 `SUPABASE_URL`、`SUPABASE_PUBLISHABLE_KEY` 验证真实用户；`SUPABASE_KEY` 仅供服务端。
 
+密钥类型：publishable key（`sb_publishable_…`，替代旧 anon key）可进入前端；`SUPABASE_KEY` 使用 **secret key**（`sb_secret_…`，替代旧 service_role，权限相同、绕过 RLS），只放 `backend/.env.runtime`。secret key 可以单独作废和重新生成，浏览器请求会被 Supabase 拒绝。它用于 Worker、演示数据包生成（`build_demo_pack.py`）和设备云端写入（`DEVICE_CLOUD_WRITE_ENABLED`）。
+
 同一个项目的 public key 与服务端高权限 key 用途不同。前端公钥可打包但仍需正确 RLS；本文件不包含任何实际 key。不要把整个 `.env`、终端环境、数据库导出或 signed URL 放入工单截图。
 
 新 Supabase 项目不能只设置 URL 就复制全部功能：仓库目前没有覆盖所有表、RLS、触发器和 Storage policies 的完整基线。`HenSense_V4_3_Avatar_Storage.sql` 只是头像相关脚本，不是全量建库。需管理员交付审核后的完整迁移/策略资料；缺少时停止新项目初始化，不猜测 SQL。
 
-## 4. 邮件与 Storage
+## 4. 管理员待办（Backend 无法代做）
+
+| 事项 | 为什么 | 状态 |
+|---|---|---|
+| `devices.device_code` 加 UNIQUE 约束 | 设备编号全局唯一由云端做最终裁决；打开 `DEVICE_CLOUD_WRITE_ENABLED` 前必须完成。执行前先查重复编号 | 待确认 |
+| 确认 `detections` / `alerts` / `device_storage_settings` → `devices` 的外键是否 `ON DELETE CASCADE` | “删除全部历史”按 对象 → alerts → detections → settings → device 顺序逐表删除；有级联可以简化 | 待确认 |
+| 提交完整 schema / RLS / Storage policy 基线 | 仓库只有头像 SQL，新项目无法完整重建 | 待提交 |
+| 轮换 `HARDWARE_API_KEY` | 旧值曾写在 `backend/.env.example` 中并进入 Git | 建议尽快 |
+
+## 5. 邮件与 Storage
 
 Web 密码恢复根据当前 origin 生成回调，默认应按使用情况配置：
 
@@ -45,7 +56,7 @@ LAN/后续正式域名要添加其精确回调；不要用个人 IP 示例或无
 
 `detection-images` 保存设备媒体，`hensense-avatars` 保存用户头像，两者应按实际策略保持私有。Cloud 读使用用户权限和短期签名 URL。新项目必须验证未登录/其他用户不能获取记录或签名，而不是只验证 owner 能显示图片。
 
-## 5. 安全交接与轮换
+## 6. 安全交接与轮换
 
 1. 清点仍在使用的 Backend、Worker、自动化和可选云代理；记录密钥使用位置但不记录明文。
 2. 管理员通过组织认可的密码管理/秘密管理渠道交付服务端凭据，不发在聊天、GitHub 或客户端配置中。

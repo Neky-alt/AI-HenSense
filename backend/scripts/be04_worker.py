@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
-import fcntl
 import sys
 import time
 from pathlib import Path
@@ -11,6 +10,7 @@ from uuid import UUID
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from app.config import settings
 from app.services.be04_worker import CloudTransport,Worker,status
+from app.services.process_lock import try_lock
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
@@ -50,11 +50,10 @@ def main():
     if a.apply:
         lock_path = resolved.with_suffix(resolved.suffix + '.be04.lock')
         lock_handle = lock_path.open('a+')
-        try:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        if not try_lock(lock_handle):
             p.error('BE-04 worker already running for this database')
-    uri=f'file:{resolved}?mode={"rw" if a.apply else "ro"}' 
+    # as_uri() gives file:///D:/... on Windows; a raw backslash path is not a valid URI.
+    uri=f'{resolved.as_uri()}?mode={"rw" if a.apply else "ro"}' 
     # Status is read-only unless --apply was explicitly supplied.
     with sqlite3.connect(uri,uri=True,timeout=20) as conn:
         if a.status:

@@ -1,12 +1,12 @@
 # API 参考
 
-[返回 README](../README.md) · [权限与数据](DATABASE_AND_SYNC.md)
+[返回 README](../README.md) · [权限与数据](DATABASE_AND_SYNC.md) · [设备管理](DEVICE_MANAGEMENT_API.md) · [Pi Worker](PI_WORKER.md)
 
-依据 `backend/app/main.py`、`backend/app/routers/` 和 AI `api_server.py`。Backend origin 为 `http://127.0.0.1:8006`，默认前缀 `/api/v1`。本表是当前代码的接口，不表示前端已启用所有写操作。
+依据 `backend/app/main.py`、`backend/app/routers/` 和 AI `api_server.py`。Backend origin 为 `http://127.0.0.1:8006`，默认前缀 `/api/v1`。
 
 ## 认证与通用结构
 
-除健康检查和框架文档外，业务接口使用 `Authorization: Bearer <access-token>`。每次请求向 Supabase 验证；设备域还验证真实 Farm 所有权。不存在/不属于当前用户的资源通常返回 404，不能用自填 user_id 绕过。Auth、注册、Profile、密码恢复由 Supabase SDK 直接处理，不存在自建 `/login`、`/register` API。
+除健康检查、框架文档和 `/hardware/*`（用 `X-Hardware-Key`，见 [PI_WORKER](PI_WORKER.md)）外，业务接口使用 `Authorization: Bearer <access-token>`。每次请求向 Supabase 验证；设备域还验证真实 Farm 所有权。不存在/不属于当前用户的资源通常返回 404，不能用自填 user_id 绕过。Auth、注册、Profile、密码恢复由 Supabase SDK 直接处理，不存在自建 `/login`、`/register` API。
 
 普通业务成功结构：
 
@@ -31,20 +31,26 @@
 | GET | `/health` | 无认证；data.status、database、app_version、api_prefix |
 | GET | `/devices` | 可选 query：farming_type=caged/free_range；status=normal/warning/offline；sort=low_desc/low_asc/name_asc/name_desc；返回有权访问且 active 的设备数组 |
 | GET | `/devices/{device_id}` | 返回设备信息、计算状态、最新监测检测 |
+| POST | `/devices` | 添加设备：`device_code`（全局唯一）、`device_name`、`farming_type`、可选 `farm_id`；201。错误码见 [DEVICE_MANAGEMENT_API.md](DEVICE_MANAGEMENT_API.md) |
+| GET | `/devices/removed` | 本人已移除（软删除）的设备 |
+| PATCH | `/devices/{device_id}` | 只允许 `{"device_name"}`；其他字段 422 |
+| DELETE | `/devices/{device_id}` | 软删除：保留历史，编号继续占用；`?purge_history=true` 则本地+云端彻底删除，编号释放 |
 | GET | `/devices/{device_id}/detections/latest` | Cage 最新记录；Free-range 仅正式 snapshot；可返回 null |
 | GET | `/devices/{device_id}/detections` | 未软删除历史数组，detected_at、created_at 倒序；当前无分页 query |
 | GET | `/devices/{device_id}/alerts` | 设备告警数组，created_at 倒序 |
 | GET | `/devices/{device_id}/detections/{detection_id}/image` | 受保护原图；无图/删除/跨设备返回 404 |
 | GET | `/devices/{device_id}/detections/{detection_id}/annotated-image` | 同记录受保护标注图 |
-| POST | `/devices/{device_id}/detect` | 无上传 body；从 Capture Adapter 取图调用 AI，返回 Detection；设备必须 Online，当前 UI 禁用 |
+| DELETE | `/devices/{device_id}/detections/{detection_id}/image` | 删除该记录的原图和标注图（`image_deleted_at`），数量与记录保留；幂等；Worker 同步删除云端对象 |
+| DELETE | `/devices/{device_id}/detections/{detection_id}` | 从 History 删除记录（`deleted_at`）并删除图片；Worker 同步 tombstone 到云端 |
+| POST | `/devices/{device_id}/commands` | `{"command_type":"manual_detection"}`；创建 Run Detection Now 命令，由 Pi 领取执行。已有 pending/running 命令时返回那一条 |
+| POST | `/devices/{device_id}/detect` | 旧路径：Backend 自己通过 Capture Adapter 取图并调用 AI 服务；默认 `CAPTURE_ADAPTER_MODE=unconfigured` 时返回 503。正常流程用上面的 commands |
 | GET | `/dashboard/summary` | 返回 cage/free_range 摘要；遵循在线及正式快照规则 |
 | GET | `/monitoring-settings/{farming_type}` | caged/free_range；当前授权范围的设置 |
-| PUT | `/monitoring-settings/{farming_type}` | MonitoringSettingsUpdate JSON，返回保存结果 |
-| GET | `/devices/{device_id}/storage` | 设备媒体容量/使用状态；读取服务端 local_storage 对应磁盘，不能据此宣称实测 Pi SD 卡 |
-| GET | `/devices/{device_id}/storage/settings` | 设备保留/容量策略 |
-| PUT | `/devices/{device_id}/storage/settings` | StorageSettingsUpdate JSON |
-| GET | `/notification-settings` | 当前用户投递偏好 |
-| PUT | `/notification-settings` | NotificationSettingsUpdate JSON |
+| PUT | `/monitoring-settings/{farming_type}` | MonitoringSettingsUpdate JSON，返回保存结果；Pi 的自动采样按此执行 |
+| GET | `/devices/{device_id}/storage` | **Web 不再使用。**读取的是 Backend 所在电脑的磁盘，不是 Pi SD 卡 |
+| GET / PUT | `/devices/{device_id}/storage/settings` | **Web 不再使用、也不生效。**图片保留固定为 30 天（`DETECTION_IMAGE_RETENTION_DAYS`） |
+| GET | `/notification-settings` | 当前用户偏好；只有 `in_app_enabled` 有效果（控制 Web 顶部告警） |
+| PUT | `/notification-settings` | NotificationSettingsUpdate JSON；`email_enabled`/`push_enabled` 保持 false |
 | POST | `/quick-detections` | Bearer + Idempotency-Key + multipart，见下文 |
 | GET | `/quick-detections` | limit 默认 30、1–100；offset 默认 0、≥0；返回 items、next_offset |
 | GET | `/quick-detections/{id}` | 当前用户详情，加 previous_id（较旧）和 next_id（较新） |
@@ -61,7 +67,9 @@
 | GET | `/cloud/farms/{farm_id}/detections/{detection_id}/media` | 验证 Farm→Device→Detection→对象前缀，返回 original/annotated 签名 URL，期限 60 秒 |
 | GET | `/sync/status` | 验证本地用户归属或明确配置且云端复核的 owner 映射；返回本地 outbox 与 detection_states，不启动 Worker |
 
-当前没有正式设备新增/编辑/删除、设备 Detection 删除、告警手工解决、Farm 自助开户或远程 Pi 指令执行 HTTP API。单条设备 Detection 详情由客户端从设备历史中定位，不要假设存在额外 `/detections/{id}` JSON 路由。多 Farm 设置选择当前没有显式 farm_id 参数，应作为后续多 Farm 配置设计限制核验。
+`/api/v1/hardware/*` 共 8 个路由供 Pi 使用，见 [PI_WORKER §6](PI_WORKER.md#6-硬件接口)。
+
+当前没有：告警手工解决、Farm 自助开户、单条 Detection 的 JSON 详情路由（客户端从设备历史中定位）。监测设置没有 `farm_id` 参数，作用于用户的第一个 Farm；多 Farm 设置需要后续设计。
 
 ## 主要返回字段
 
@@ -115,6 +123,11 @@ curl --fail-with-body "$BACKEND_ORIGIN/api/v1/quick-detections" \
 | 403 FORBIDDEN | 不支持的范围写入/同步状态权限不足 |
 | 404 NOT_FOUND | 无记录、非所有者、无媒体或未注册可选路由 |
 | 409 DEVICE_OFFLINE | 设备手动检测时 Offline |
+| 409 DEVICE_CODE_TAKEN / DEVICE_CODE_RETIRED | 添加设备时编号已被占用 / 属于本人已移除的设备 |
+| 404 FARM_NOT_FOUND | 用户没有可用 Farm |
+| 422 INVALID_DEVICE_CODE / INVALID_DEVICE_NAME / INVALID_FARMING_TYPE | 设备字段校验失败 |
+| 503 CLOUD_UNAVAILABLE | 开启云端写入时 Supabase 不可达，未做任何修改 |
+| 409（硬件） | 命令已不在 running（已完成或已超时） |
 | 409 / DELETE_BUSY | 幂等冲突，或 Quick 正在处理不能删除 |
 | 413 / 415 / 422 | 大小、格式、内容或参数不合法 |
 | 502 INVALID_AI_RESULT / DETECTION_FAILED | 设备 AI/捕获结果异常 |
@@ -142,3 +155,7 @@ AI 返回 `total_count`、`high_count`、`low_count`、`ratio_normal`、`cage_la
 运行 Backend 后访问 `http://127.0.0.1:8006/docs`，机器描述为 `/openapi.json`；AI 也有自己的 `/docs`。这些是框架文档路径，不属于 `/api/v1`。当前认证用 Header 参数声明，不应假设有全局 OAuth 登录按钮；在受保护操作的 authorization 字段填写自己的 `Bearer ...`。写操作只对隔离测试环境 Try it out，不对演示数据随意点击。
 
 前端 Cloud 模式直连 Supabase SDK/PostgREST，其 RLS/Schema 由云端项目管理，不是这些 FastAPI Router 自动创建的。
+
+## 设备命令生命周期（Run Detection Now）
+
+用户 `POST /devices/{id}/commands` → Pi `commands/claim`（原子领取）→ Pi 上传结果 → 命令 `completed`。超时：pending 600 秒、running 300 秒自动 `failed`。详细规则、重试和监测时段占位见 [PI_WORKER §5](PI_WORKER.md#5-可靠性规则)。

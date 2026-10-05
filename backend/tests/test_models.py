@@ -196,8 +196,8 @@ def test_ratio_out_of_range_rejected(session):
         session.commit()
 
 
-def test_device_code_is_unique_within_farm_only(session):
-    """同一个 Farm 内 device_code 不能重复，但不同 Farm 可以使用相同编号。"""
+def test_device_code_is_globally_unique(session):
+    """2026-10-03 决定：device_code 全局唯一，不同 Farm 也不能使用相同编号。"""
     session.add_all(
         [
             Profile(user_id="u-a"),
@@ -208,28 +208,20 @@ def test_device_code_is_unique_within_farm_only(session):
     )
     session.commit()
 
-    session.add_all(
-        [
-            Device(
-                device_id="d-a",
-                farm_id="f-a",
-                device_code="CAGE-01",
-                farming_type="caged",
-            ),
-            Device(
-                device_id="d-b",
-                farm_id="f-b",
-                device_code="CAGE-01",
-                farming_type="caged",
-            ),
-        ]
+    session.add(
+        Device(
+            device_id="d-a",
+            farm_id="f-a",
+            device_code="CAGE-01",
+            farming_type="caged",
+        )
     )
     session.commit()
 
     session.add(
         Device(
-            device_id="d-a-duplicate",
-            farm_id="f-a",
+            device_id="d-b",
+            farm_id="f-b",
             device_code="CAGE-01",
             farming_type="caged",
         )

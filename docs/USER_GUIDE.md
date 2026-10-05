@@ -2,7 +2,7 @@
 
 [返回 README](../README.md) · [部署与连接](DEPLOYMENT.md)
 
-本手册用中文解释操作，保留实际英文界面名称。Web 与 Mobile 的功能边界不同；看到表单或 `Saved` 不代表已向设备下发配置。部署模式由维护人员设置，当前不是用户在 App 中自由切换的功能。
+本手册用中文解释操作，保留实际英文界面名称。下文以 Web 为准；Mobile 由 Mobile 组维护，功能以其实际版本为准。数据模式（Local / Cloud）由维护人员设置：Cloud 模式只读，设备管理、设置保存、Run Detection Now 和删除按钮都会隐藏。
 
 ## 1. 登录、注册与密码恢复
 
@@ -25,7 +25,7 @@ App 自身错误提示为英文；iOS 系统权限弹窗语言由手机系统决
 - 没有记录显示空值；有效的零目标检测显示 0/0/0，比例可能没有意义，应显示空值而非编造百分比。
 - Mobile 首页相机图标进入 Quick Detection，提醒图标进入告警相关界面。
 
-**Web 顶部提醒限制：** `AlertsMailbox` 仍使用原型告警源。查看实际告警应进入正式 `Alerts` 页面；顶部徽标不能作为实时告警或多账号隔离验收依据。
+**Web 顶部提醒：** 信封图标显示当前 Active 告警数量和列表，数据来自 Backend。在 `Alert Settings` 关闭 In-app alerts 后，这个图标会隐藏；`Alerts` 页面不受影响。
 
 ## 3. Cage Monitoring
 
@@ -51,13 +51,21 @@ Warning 使用服务端连续两次达到阈值的规则；单次低产比例较
 4. 标注中 Normal 为绿色框，Low 为红色框；`p(Normal)` 是模型分类概率，不是实际产蛋概率或校准后的置信度。
 5. 使用 `Previous`/`Next` 切换相邻记录；刷新页面后仍应保持该 Detection 的图片和数字一致。
 
-设备记录与 Quick Detection 历史分开。当前正式 Backend 没有设备 Detection 删除 API；不要用手机历史删除按钮理解或替代设备数据管理。
+**删除（`Detection History` 页面，每行右侧）：**
+
+- `Delete image`：删除这条记录的原图和标注图（本系统和云端都删），数量、比例、时间保留。
+- `Delete record`：把这条记录从历史中删除，并删除其图片。
+- 两者都要在弹窗中确认，无法通过界面恢复。
+
+**图片只保留 30 天**：超过 30 天的检测图片会自动删除（Pi、Backend、云端副本），记录和数量保留，页面显示占位图。这是固定规则，不能在界面上修改。
+
+设备记录与 Quick Detection 历史分开，互不影响。
 
 ## 6. Alerts
 
 进入 `Alerts`，用 `All`、`Active`、`Resolved` 筛选。告警由系统条件产生，用户不手动标记解决；底层条件恢复并经相应处理逻辑更新后转为 Resolved。当前演示不是持续运行的硬件采集系统，等待页面本身不会触发现场检测或保证告警定时更新。
 
-`Notification Settings` 界面不等于邮件/系统 Push 已开通，当前没有验证完整的邮件与推送投递链路。
+`Alert Settings`（Profile → Alert Settings）只有一个开关 `Show alerts in the app`：关闭后隐藏顶部信封图标，告警本身照常产生和恢复。系统没有邮件或 Push 通知。
 
 ## 7. Profile
 
@@ -65,21 +73,49 @@ Web `Profile`、Mobile `Profile`/编辑入口可查看账户、修改显示名�
 
 按页面 `Save`/照片操作提交，等成功提示后检查另一端；上传失败不要假定旧头像已经删除。Web 头像支持 JPEG/PNG/WebP、限制 2 MB；手机使用选图器处理。更改显示名称不是更改登录邮箱或 Farm 所有权。
 
-## 8. 设备管理和 Settings 的真实边界
+## 8. 设备管理
 
-| 项目 | Web | Mobile |
+### 添加设备
+
+1. `Cage Monitoring` 或 `Free-range Monitoring` 页面右上角点 `+`。
+2. 填 `Device ID`（Raspberry Pi 机身上的编号，3–32 位字母、数字或连字符，自动转大写）、`Device Name`，选择 `Caged` 或 `Free-range`。**养殖类型添加后不能修改。**
+3. 点 `Add Device`。成功后新设备显示为 Offline，等 Pi 配置好 `device_id` 并发出第一次心跳后变为 Online（配置见 [PI_WORKER](PI_WORKER.md)）。
+
+常见提示：
+
+| 提示 | 含义 |
+|---|---|
+| This Device ID is already registered. | 编号已被使用（任何账户） |
+| This Device ID belongs to a device you removed… | 编号属于你以前移除的设备，历史还在。页面会提供 `Delete old history and add this device`，确认后永久删除旧历史并添加新设备 |
+| You need a farm before adding devices. | 账户没有 Farm，请联系管理员 |
+| Unable to reach the cloud right now… | 云端暂时不可达，没有做任何修改，稍后重试 |
+
+### 改名
+
+设备卡片 `Edit`：只能修改 `Device Name`；Device ID 和养殖类型只读。
+
+### 删除设备
+
+设备卡片 `Delete`，弹窗中二选一：
+
+- `Remove device`：停止监测并从列表隐藏，**历史保留**，这个编号以后不能再用。
+- `Remove and delete all history`：永久删除设备及其全部检测、告警和图片（包括云端副本）。需要输入设备编号确认，之后编号可以重新使用。
+
+### Run Detection Now
+
+设备详情页点 `Run Detection Now`：Pi 立即拍一张照片并检测，完成后出现在历史中。设备 Offline 时按钮不可用；重复点击不会重复排队。Pi 5 分钟内没有结果时，这次命令自动标为失败。
+
+## 9. Settings
+
+| 页面 | 入口 | 作用 |
 |---|---|---|
-| 设备列表/详情/历史 | 使用真实 Local 或 Cloud 数据 | 使用真实 Local 或 Cloud 数据 |
-| `Add Device` / `Edit Device` | 遗留浏览器原型，仅当前账户/模式的 localStorage；不登记真实设备 | 进入 `Read-only monitoring` 提示 |
-| `Run Detection Now` | 当前 UI 禁用 | 当前 UI 禁用 |
-| Cage/Free-range Settings | 表单和保存仍为浏览器本地设置，不下发 Backend | 只读提示 |
-| Notification/Storage Settings | 本地原型配置，存储容量不可当作真实 SD 卡状态 | 只读提示 |
+| `Cage Settings` | Cage 页面 `Settings` 或 Profile | 监测开关、时间窗、定时 / 间隔、Low-production Ratio 阈值；Pi 按此自动采样 |
+| `Free-range Settings` | Free-range 页面 `Settings` 或 Profile | 监测开关、时间窗、快照间隔、Low Count 阈值 |
+| `Alert Settings` | Profile | In-app alerts 开关 |
 
-如果在 Web 原型页面填写设备 Code/名称、选择 Caged/Free-range 并保存，仅形成浏览器原型记录，不会增加正式监测设备；因此正式列表不出现新设备是预期。编辑真实设备时原型存储中可能找不到它。不要用于客户生产配置。
+设置保存在 Backend，对该 Farm 的所有设备生效；刷新页面或换浏览器后仍然存在。保存失败会显示错误，不会假装成功。
 
-Settings 可以展示监测开关、时间/间隔、阈值、保留期等，但 Web 的 `Save` 不会改变服务端业务规则。Backend 存在相应受保护设置 API，尚不能据此宣称两端配置功能已完成。
-
-## 9. Mobile Quick Detection
+## 10. Mobile Quick Detection
 
 1. 首页右上角点击相机图标。
 2. 默认 `Caged`；需要时选择 `Free-range`。Free-range 页面说明仅是单张图片结果。
@@ -94,7 +130,7 @@ Settings 可以展示监测开关、时间/间隔、阈值、保留期等，但 
 
 Cloud 监测模式不会把 Quick Detection 变成纯云端功能。外出时必须仍能安全访问 Backend，且 Backend 能连接 AI；只连 Supabase 不够。查看已有 Quick 历史不需要 AI 重新推理，但必须连接原 Backend。
 
-## 10. Quick Detection History 与删除
+## 11. Quick Detection History 与删除
 
 在 Quick Detection 页面右上角点击 `History`。只显示当前用户的手机记录，按创建时间倒序，状态为 `Completed`、`Analyzing` 或 `Failed`。
 

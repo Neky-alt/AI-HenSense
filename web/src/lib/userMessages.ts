@@ -21,7 +21,8 @@ const localMessages = new Set([
  "This reset link is invalid or expired. Please request a new email.",
  "Open a valid password reset link and wait for verification before submitting.",
  "Password updated, but sign out failed. Please sign out before signing in again.",
- "Password updated. Please sign out before signing in again."
+ "Password updated. Please sign out before signing in again.",
+ "This action requires the local Backend."
 ]);
 const messages: Record<string,string> = {
  ERR_MISSING_PERMISSION: 'Photo access was denied. Allow access in Settings and try again.',
@@ -40,6 +41,13 @@ const messages: Record<string,string> = {
  DELETE_FAILED: 'Unable to delete this record. Please try again.',
  DELETE_CLEANUP_PENDING: 'Deletion is not yet complete. Please retry deleting this record.',
  DELETE_UNSAFE_MEDIA: 'Unable to delete this record safely. Please contact support.',
+ DEVICE_CODE_TAKEN: 'This Device ID is already registered.',
+ DEVICE_CODE_RETIRED: 'This Device ID belongs to a device you removed. Delete its history to reuse it.',
+ INVALID_DEVICE_CODE: 'Device ID must be 3–32 letters, numbers or hyphens.',
+ INVALID_DEVICE_NAME: 'Enter a device name (up to 64 characters).',
+ INVALID_FARMING_TYPE: 'Choose a farming type.',
+ FARM_NOT_FOUND: 'You need a farm before adding devices.',
+ CLOUD_UNAVAILABLE: 'Unable to reach the cloud right now. Nothing was changed. Please try again.',
 };
 export function userMessage(error: unknown, fallback = 'Something went wrong. Please try again.'): string {
  const e = (error && typeof error === 'object' ? error : {}) as {code?:string;status?:number;message?:string;name?:string};

@@ -7,32 +7,19 @@ import DeviceConnectionStatus from "../components/DeviceConnectionStatus";
 import Icon from "../components/Icon";
 import InfoTooltip from "../components/InfoTooltip";
 import { MONITORING_STATUS_CLASS, MONITORING_STATUS_LABEL } from "../config/monitoringStatus";
-import { getDeviceStorageStatus } from "../services/settingsService";
-import type { DeviceStorageStatus } from "../types/settings";
 import { loadDevice, runManualDetection } from "../services/detectionService";
+import { LOCAL_BACKEND_WRITES } from "../services/apiClient";
 import { useBackendData } from "../hooks/useBackendData";
 import BackendStatus from "../components/BackendStatus";
 import DetectionImage from "../components/DetectionImage";
 import { formatRatio } from "../utils/ratio";
-
-const DEFAULT_STORAGE_STATUS: DeviceStorageStatus = {
-  capacityGb: 128,
-  usedGb: 32,
-  availableGb: 96,
-};
 
 function DeviceDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const request = useBackendData(loadDevice, id);
   const device = request.data;
-  const [storageStatus, setStorageStatus] = useState<DeviceStorageStatus>(DEFAULT_STORAGE_STATUS);
   const [manualDetectionMessage, setManualDetectionMessage] = useState("");
-
-  useEffect(() => {
-    if (!id) return;
-    getDeviceStorageStatus(id).then(setStorageStatus);
-  }, [id]);
 
   useEffect(() => {
     if (!manualDetectionMessage) return;
@@ -95,7 +82,7 @@ const runDetectionNow = async () => {
           </div>
 
           <div className="device-detail-actions">
-            <div className="device-action-with-info">
+            {LOCAL_BACKEND_WRITES && <div className="device-action-with-info">
               <button
                 type="button"
                 className="device-detail-action-button primary"
@@ -107,25 +94,7 @@ const runDetectionNow = async () => {
                 Run Detection Now
               </button>
               <InfoTooltip label="Immediately capture one current frame from this device and run one AI detection. It can be used even when automatic monitoring is off, but it is unavailable while the device is offline." />
-            </div>
-
-            <div className="device-action-with-info">
-              <button
-                type="button"
-                className="device-detail-action-button"
-                onClick={() => navigate(`/devices/${device.device_id}/storage`)}
-              >
-                <Icon name="settings" size={17} />
-                Storage Settings
-              </button>
-              <InfoTooltip
-                label={
-                  isFreeRange
-                    ? "Manage this device's SD-card detection-image and local-video storage, media retention and storage-limit behaviour. Structured Detection History is managed separately."
-                    : "Manage this Cage device's SD-card detection-image storage, image retention and storage-limit behaviour. Cage monitoring does not require continuous video recording."
-                }
-              />
-            </div>
+            </div>}
           </div>
         </div>
 
@@ -170,16 +139,9 @@ const runDetectionNow = async () => {
           </div>
         </div>
 
-        <div className="device-storage-summary">
-          <div>
-            <div className="settings-title-line">
-              <strong>Local SD Card</strong>
-              <InfoTooltip label="Capacity and usage will be reported by the Raspberry Pi backend. The current values are frontend prototype data until device integration is connected." />
-            </div>
-            <span>{storageStatus.usedGb} GB used of {storageStatus.capacityGb} GB · {storageStatus.availableGb} GB available</span>
-          </div>
-          <button type="button" className="text-action-button" onClick={() => navigate(`/devices/${device.device_id}/storage`)}>Manage storage →</button>
-        </div>
+        <p className="dd-retention-note">
+          <Icon name="info" size={14} /> Detection images are kept for 30 days, then deleted automatically on the device and in the cloud. Counts and history records are kept.
+        </p>
 
         <p className="last-updated">{isHistorical ? "Recorded" : "Updated"} {device.last_updated}</p>
         <DetectionHistory deviceId={device.device_id} />

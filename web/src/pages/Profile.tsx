@@ -79,16 +79,17 @@ export default function Profile() {
     let active = true;
 
     const loadSettings = async () => {
-      const [cage, freeRange, alerts] = await Promise.all([
+      // Each summary loads independently so one failing request does not hide the others.
+      const [cage, freeRange, alerts] = await Promise.allSettled([
         getCageMonitoringSettings(),
         getFreeRangeMonitoringSettings(),
         getAlertNotificationSettings(),
       ]);
 
       if (active) {
-        setCageSettings(cage);
-        setFreeRangeSettings(freeRange);
-        setAlertSettings(alerts);
+        if (cage.status === "fulfilled") setCageSettings(cage.value);
+        if (freeRange.status === "fulfilled") setFreeRangeSettings(freeRange.value);
+        if (alerts.status === "fulfilled") setAlertSettings(alerts.value);
       }
     };
 
@@ -337,10 +338,10 @@ export default function Profile() {
               <button type="button" className="settings-hub-item" onClick={() => navigate("/settings/alerts", { state: { from: "/profile" } })}>
                 <span className="settings-hub-icon settings-hub-icon-alert"><Icon name="bell" size={20} /></span>
                 <span className="settings-hub-copy">
-                  <strong>Alert & Notification Settings</strong>
+                  <strong>Alert Settings</strong>
                   <small>
                     {alertSettings
-                      ? alertSettings.notificationsEnabled ? "Notifications enabled" : "Notifications paused"
+                      ? alertSettings.inAppEnabled ? "In-app alerts on" : "In-app alerts off"
                       : "Loading settings..."}
                   </small>
                 </span>
@@ -351,7 +352,7 @@ export default function Profile() {
             <div className="settings-hub-note">
               <Icon name="info" size={17} />
               <span>
-                These prototype settings are stored through an asynchronous frontend service. BE-05 can replace the persistence layer without redesigning these pages.
+                These settings are saved to the Backend and apply to every device on your farm.
               </span>
             </div>
           </section>
