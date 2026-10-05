@@ -1,9 +1,11 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Image, ImageBackground, Pressable, StyleSheet, Text, View } from 'react-native';
 import { COLORS } from '../constants/theme';
 import { formatElapsed, formatLocalDate, getGreeting } from '../utils/time';
+import { useBackendData } from '../hooks/useBackendData';
+import { getAlertNotificationSettings } from '../services/settingsService';
 
 const brandIcon = require('../../assets/brand/hensense-logo.png');
 const farmland = require('../../assets/brand/hensense-hero.png');
@@ -24,6 +26,12 @@ export default function FarmHero({
     const interval = setInterval(() => setNow(new Date()), 60_000);
     return () => clearInterval(interval);
   }, []));
+  // Same rule as Web: hidden until the preference is known or when turned off; shown if it cannot be read.
+  // Keep the last known value while refreshing on focus so the bell does not flicker between tabs.
+  const alertPref = useBackendData(getAlertNotificationSettings);
+  const knownPref = useRef<boolean | null>(null);
+  if (alertPref.data) knownPref.current = alertPref.data.in_app_enabled;
+  const showBell = knownPref.current === null ? !alertPref.loading : knownPref.current;
   const lastUpdate = formatElapsed(updatedAt, now);
   const compact = !home && !title;
   return (
@@ -41,7 +49,7 @@ export default function FarmHero({
           </View>
           <View style={{flexDirection:'row',gap:8}}>
           {home&&<Pressable accessibilityRole="button" accessibilityLabel="Quick Detection camera" onPress={()=>router.push('/quick-detection')} style={styles.bell}><Ionicons name="camera-outline" size={21} color={COLORS.text}/></Pressable>}
-          <Pressable
+          {showBell && <Pressable
             accessibilityRole="button" accessibilityLabel="View alerts"
             onPress={() => router.push('/alerts')} style={styles.bell}
           >
@@ -49,7 +57,7 @@ export default function FarmHero({
             {alertCount > 0 && <View style={styles.dot}>
               <Text style={styles.dotText}>{alertCount > 9 ? '9+' : alertCount}</Text>
             </View>}
-          </Pressable>
+          </Pressable>}
           </View>
         </View>
         {!compact && <View style={styles.heroText}>

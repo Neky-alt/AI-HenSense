@@ -21,7 +21,8 @@ const localMessages = new Set([
  "This reset link is invalid or expired. Please request a new email.",
  "Open a valid password reset link and wait for verification before submitting.",
  "Password updated, but sign out failed. Please sign out before signing in again.",
- "Password updated. Please sign out before signing in again."
+ "Password updated. Please sign out before signing in again.",
+ "This action requires the local Backend."
 ]);
 const messages: Record<string,string> = {
  ERR_MISSING_PERMISSION: 'Photo access was denied. Allow access in Settings and try again.',

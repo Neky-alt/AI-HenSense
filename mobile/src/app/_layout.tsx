@@ -5,6 +5,21 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { AuthProvider, useAuth } from '../contexts/AuthContext';
 import { COLORS } from '../constants/theme';
 
+const PROTECTED_ROUTES = [
+  'device/add',
+  'device/edit/[id]',
+  'device/[id]/index',
+  'device/[id]/history',
+  'device/[id]/detections/[detectionId]',
+  'quick-detection/index',
+  'quick-detection/history',
+  'quick-detection/[id]',
+  'settings/alerts',
+  'settings/cage',
+  'settings/free-range',
+  'profile/edit',
+];
+
 function Navigation() {
   const { session, loading, configured, recovering, recovery } = useAuth();
   useEffect(() => {
@@ -22,10 +37,8 @@ function Navigation() {
     </Stack.Protected>
     <Stack.Protected guard={!!session && !recovering}>
       <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="device" />
-      <Stack.Screen name="quick-detection" />
-      <Stack.Screen name="settings" />
-      <Stack.Screen name="profile" />
+      {/* Folders without their own _layout register leaf routes, so list them by full name. */}
+      {PROTECTED_ROUTES.map(name => <Stack.Screen key={name} name={name} />)}
     </Stack.Protected>
   </Stack>;
 }

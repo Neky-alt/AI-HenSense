@@ -5,13 +5,14 @@ import { getFreeRangeResults, withDetection } from '../../services/detectionServ
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import AppScreen from '../../components/AppScreen';
 import FarmHero from '../../components/FarmHero';
 import DevicePhoto from '../../components/DevicePhoto';
 import { ConnectionBadge, MonitoringBadge } from '../../components/StatusBadge';
 import { COLORS } from '../../constants/theme';
-import { deleteDevice, getDevices } from '../../services/deviceStorage';
+import { getDevices } from '../../services/deviceStorage';
+import { deviceManagementEnabled } from '../../services/deviceService';
 import type { Device, MonitoringStatus } from '../../types/device';
 import { formatRatio } from '../../utils/ratio';
 import { formatDeviceUpdate } from '../../utils/time';
@@ -40,18 +41,17 @@ export default function FreeRangeScreen() {
   const selectedDevice=list.find(d=>d.device_id===selected)??list[0];
   const results=useBackendData(getFreeRangeResults,selectedDevice?.device_id??'');
   const camera=selectedDevice?withDetection(selectedDevice,results.data?.formal??null):undefined;
-  const remove=(_d:Device)=>Alert.alert('Read-only monitoring','Device deletion is not enabled in Mobile Stage 1.');
   return <AppScreen>
-    <FarmHero title="Free-range Monitoring" subtitle="Latest snapshots from each monitoring source"/><BackendStatus {...state}/><BackendStatus {...results}/>
+    <FarmHero title="Free-range Monitoring" subtitle="Latest snapshots from each monitoring source"/><BackendStatus {...state}/>{!state.loading&&!state.error&&<BackendStatus {...results}/>}
     <View style={styles.toolbar}>
       <Text style={styles.total}>{all.length} devices</Text>
       <View style={styles.toolbarButtons}>
         <Pressable onPress={()=>router.push('/settings/free-range')} style={styles.secondary} accessibilityRole="button">
           <Ionicons name="settings-outline" size={15} color={COLORS.primaryDark}/><Text style={styles.secondaryText}>Settings</Text>
         </Pressable>
-        <Pressable onPress={()=>router.push({pathname:'/device/add',params:{farming_type:'free_range'}})} style={styles.add} accessibilityRole="button" accessibilityLabel="Add free-range device">
+        {deviceManagementEnabled()&&<Pressable onPress={()=>router.push({pathname:'/device/add',params:{farming_type:'free_range'}})} style={styles.add} accessibilityRole="button" accessibilityLabel="Add free-range device">
           <Ionicons name="add" size={21} color="#fff"/>
-        </Pressable>
+        </Pressable>}
       </View>
     </View>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filters} contentContainerStyle={styles.filterRow}>
@@ -73,11 +73,9 @@ export default function FreeRangeScreen() {
         <View style={styles.cardHead}><View style={{flex:1}}><Text style={styles.cameraName}>{camera.device_name}</Text><Text style={styles.code}>{camera.device_code}</Text></View><ConnectionBadge status={camera.device_status}/></View>
         <DevicePhoto device={camera} height={185}/>
         <View style={styles.imageFooter}><Text style={styles.updated}>Updated {formatDeviceUpdate(camera.detected_at)}</Text><Pressable onPress={()=>router.push(`/device/${camera.device_id}`)}><Text style={styles.link}>View Details →</Text></Pressable></View>
-        <View style={styles.cardActions}><Pressable style={styles.smallBtn} onPress={()=>router.push(`/device/edit/${camera.device_id}`)}><Ionicons name="create-outline" size={14} color={COLORS.primaryDark}/><Text style={styles.smallBtnText}>Edit</Text></Pressable>
-          <Pressable style={styles.smallBtn} onPress={()=>remove(camera)}><Ionicons name="trash-outline" size={14} color={COLORS.danger}/><Text style={[styles.smallBtnText,{color:COLORS.danger}]}>Delete</Text></Pressable></View>
       </View>
       <SnapshotSummary device={camera}/>{!results.loading && !results.error && !results.data?.formal && <LatestManualDetection device={camera} detection={results.data?.manual??null}/>}
-    </>:!state.loading&&!state.error&&<View style={styles.empty}><Text style={styles.emptyTitle}>No matching free-range devices</Text><Text style={styles.emptyText}>No accessible devices match this view. Your account may not have a farm yet.</Text></View>}
+    </>:!state.loading&&!state.error&&<View style={styles.empty}><Text style={styles.emptyTitle}>No matching free-range devices</Text><Text style={styles.emptyText}>{all.length?'No devices match this filter.':deviceManagementEnabled()?'Tap + to add your first free-range device.':'No free-range devices are available in this snapshot.'}</Text></View>}
     <Modal visible={deviceOpen} transparent animationType="slide" onRequestClose={()=>setDeviceOpen(false)}>
       <Pressable style={styles.modalBack} onPress={()=>setDeviceOpen(false)}><Pressable style={styles.modal} onPress={event=>event.stopPropagation()}>
         <View style={styles.modalHandle}/><Text style={styles.modalTitle}>Choose monitoring device</Text><Text style={styles.modalSub}>Select the free-range source to view.</Text>
@@ -117,8 +115,7 @@ const styles=StyleSheet.create({
   deviceSelectIcon:{width:36,height:36,borderRadius:11,backgroundColor:COLORS.primarySoft,alignItems:'center',justifyContent:'center'},deviceSelectName:{fontSize:12,fontWeight:'800',color:COLORS.text},deviceSelectCode:{fontSize:10,color:COLORS.textSecondary,marginTop:3},
   cameraCard:{padding:13,borderWidth:1,borderColor:COLORS.border,borderRadius:18,backgroundColor:'#fff',marginBottom:14},cardHead:{flexDirection:'row',gap:9,alignItems:'center',justifyContent:'space-between',marginBottom:10},
   cameraName:{fontSize:16,fontWeight:'800',color:COLORS.text},code:{fontSize:10,color:COLORS.textSecondary,marginTop:3},imageFooter:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginTop:10},
-  updated:{fontSize:10,color:COLORS.textLight},link:{fontSize:10,fontWeight:'800',color:COLORS.primaryDark},cardActions:{flexDirection:'row',gap:9,marginTop:12},
-  smallBtn:{flexDirection:'row',gap:5,alignItems:'center',backgroundColor:COLORS.background,borderRadius:9,paddingHorizontal:10,paddingVertical:8},smallBtnText:{fontSize:10.5,fontWeight:'800',color:COLORS.primaryDark},
+  updated:{fontSize:10,color:COLORS.textLight},link:{fontSize:10,fontWeight:'800',color:COLORS.primaryDark},
   summary:{padding:14,borderWidth:1,borderColor:COLORS.border,borderRadius:18,backgroundColor:'#fff',marginBottom:16},summaryTitle:{fontSize:16,fontWeight:'800',color:COLORS.text},summarySub:{fontSize:10,color:COLORS.textSecondary,marginTop:4},
   countRow:{flexDirection:'row',paddingVertical:12,marginTop:9,borderTopWidth:1,borderBottomWidth:1,borderColor:COLORS.border},count:{flex:1,alignItems:'center'},countLabel:{fontSize:10,color:COLORS.textSecondary},countValue:{fontSize:20,fontWeight:'900',marginTop:4},
   ratioRow:{flexDirection:'row',gap:10,marginTop:12},ratioBox:{flex:1,padding:11,borderRadius:13,backgroundColor:COLORS.surfaceSoft,borderWidth:1,borderColor:COLORS.border},label:{fontSize:10,fontWeight:'700',color:COLORS.textSecondary},

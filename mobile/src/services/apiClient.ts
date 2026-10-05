@@ -1,6 +1,8 @@
 import { accountRequest } from './accountRequest';
 import { serviceError } from '../lib/userMessages';
 // Expo statically inlines EXPO_PUBLIC variables; never fall back to phone localhost.
+/** Writes need the local Backend; cloud snapshot mode is read-only (same rule as Web). */
+export const localBackendWrites = () => process.env.EXPO_PUBLIC_DATA_SOURCE !== 'cloud';
 export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').trim().replace(/\/$/, '');
 export function resolveBackendUrl(path: string, base = API_BASE_URL): string {
   // Cloud mode returns absolute HTTPS signed URLs and does not require a LAN API address.
@@ -131,3 +133,50 @@ export async function apiPut<T>(
     clearTimeout(timer);
   }
 }
+// Shared writer for PATCH/DELETE (Device Management). Same envelope and
+// error contract as apiPost/apiPut: throws serviceError(status, error.code).
+async function apiSend<T>(
+  method: 'PATCH' | 'DELETE',
+  path: string,
+  payload?: unknown
+): Promise<T> {
+  const account = await accountRequest();
+
+  if (process.env.EXPO_PUBLIC_DATA_SOURCE === 'cloud') {
+    throw new Error('This action requires the local Backend.');
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      Authorization: `Bearer ${account.token}`,
+    };
+    if (payload !== undefined) headers['Content-Type'] = 'application/json';
+
+    const response = await fetch(resolveBackendUrl(`/api/v1${path}`), {
+      method,
+      signal: controller.signal,
+      headers,
+      body: payload === undefined ? undefined : JSON.stringify(payload),
+    });
+
+    const body = await response.json();
+
+    if (!response.ok || body.success !== true) {
+      throw serviceError(response.status, body.error?.code);
+    }
+
+    await account.check();
+    return body.data as T;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export const apiPatch = <T>(path: string, payload: unknown) =>
+  apiSend<T>('PATCH', path, payload);
+
+export const apiDelete = <T>(path: string) => apiSend<T>('DELETE', path);

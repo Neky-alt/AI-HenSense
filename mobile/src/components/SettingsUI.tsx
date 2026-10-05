@@ -52,8 +52,8 @@ export function InfoNote({children,tone='green'}:{children:ReactNode;tone?:'gree
   return <View style={[styles.infoNote,tone==='red'&&styles.infoNoteRed]}><Ionicons name="information-circle-outline" size={17} color={tone==='red'?COLORS.danger:COLORS.primaryDark}/>
     <Text style={[styles.noteText,tone==='red'&&{color:'#9D393E'}]}>{children}</Text></View>;
 }
-export function SaveButton({onPress,label='Save Changes'}:{onPress:()=>void;label?:string}) {
-  return <Pressable accessibilityRole="button" onPress={onPress} style={styles.save}><Text style={styles.saveText}>{label}</Text></Pressable>;
+export function SaveButton({onPress,label='Save Changes',saving=false}:{onPress:()=>void;label?:string;saving?:boolean}) {
+  return <Pressable accessibilityRole="button" accessibilityState={{disabled:saving,busy:saving}} disabled={saving} onPress={onPress} style={[styles.save,saving&&{opacity:.6}]}><Text style={styles.saveText}>{saving?'Saving…':label}</Text></Pressable>;
 }
 const styles=StyleSheet.create({
   back:{flexDirection:'row',alignItems:'center',gap:5,paddingVertical:14,alignSelf:'flex-start'},backText:{fontSize:11,fontWeight:'700',color:COLORS.textSecondary},

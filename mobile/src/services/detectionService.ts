@@ -1,7 +1,7 @@
 import type { Detection } from '../types/detection';
 import type { Device } from '../types/device';
 import type { Alert } from '../types/alert';
-import { apiGet, apiPost, resolveBackendUrl } from './apiClient';
+import { apiDelete, apiGet, apiPost, resolveBackendUrl } from './apiClient';
 export interface ApiDetection extends Omit<Detection, 'screenshot_url' | 'source_type'> {
   capture_source_type: Detection['source_type'];
   image_url: string | null;
@@ -93,4 +93,17 @@ export async function runManualDetection(
       command_type: 'manual_detection',
     }
   );
+}
+
+const detectionPath = (deviceId: string, detectionId: string) =>
+  `/devices/${encodeURIComponent(deviceId)}/detections/${encodeURIComponent(detectionId)}`;
+
+/** Deletes the original and annotated image; counts and the record stay. Synced to cloud. */
+export async function deleteDetectionImage(deviceId: string, detectionId: string): Promise<Detection> {
+  return mapDetection(await apiDelete<ApiDetection>(`${detectionPath(deviceId, detectionId)}/image`));
+}
+
+/** Removes the record from History together with its images. Synced to cloud. */
+export function deleteDetectionRecord(deviceId: string, detectionId: string) {
+  return apiDelete<{ detection_id: string; deleted: true }>(detectionPath(deviceId, detectionId));
 }

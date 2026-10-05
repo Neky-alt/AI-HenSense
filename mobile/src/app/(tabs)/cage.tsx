@@ -3,12 +3,13 @@ import { useBackendData } from '../../hooks/useBackendData';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import AppScreen from '../../components/AppScreen';
 import FarmHero from '../../components/FarmHero';
 import DeviceCard from '../../components/DeviceCard';
 import { COLORS } from '../../constants/theme';
-import { deleteDevice, getDevices } from '../../services/deviceStorage';
+import { getDevices } from '../../services/deviceStorage';
+import { deviceManagementEnabled } from '../../services/deviceService';
 import type { Device, MonitoringStatus } from '../../types/device';
 
 type Filter = 'all' | MonitoringStatus | 'offline';
@@ -52,7 +53,6 @@ export default function CageScreen() {
     if (sort === 'name-desc') matching.sort((a, b) => b.device_name.localeCompare(a.device_name));
     return matching;
   }, [cages, filter, query, sort]);
-  const remove = (_d: Device) => Alert.alert('Read-only monitoring', 'Device deletion is not enabled in Mobile Stage 1.');
 
   return <AppScreen>
     <FarmHero title="Cage Monitoring" subtitle="Latest fixed-cage detection results" /><BackendStatus {...state}/>
@@ -62,9 +62,9 @@ export default function CageScreen() {
         <Pressable accessibilityRole="button" style={styles.secondary} onPress={() => router.push('/settings/cage')}>
           <Ionicons name="settings-outline" size={15} color={COLORS.primaryDark} /><Text style={styles.secondaryText}>Settings</Text>
         </Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel="Add cage device" style={styles.add} onPress={() => router.push({ pathname: '/device/add', params: { farming_type: 'caged' } })}>
+        {deviceManagementEnabled() && <Pressable accessibilityRole="button" accessibilityLabel="Add cage device" style={styles.add} onPress={() => router.push({ pathname: '/device/add', params: { farming_type: 'caged' } })}>
           <Ionicons name="add" size={21} color="#fff" />
-        </Pressable>
+        </Pressable>}
       </View>
     </View>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filters} contentContainerStyle={styles.filterRow}>
@@ -87,10 +87,10 @@ export default function CageScreen() {
       </Pressable>
     </View>
     {sort !== 'default' && <Text style={styles.sortSummary}>{sortLabels[sort]}</Text>}
-    {list.map(d => <DeviceCard key={d.device_id} device={d} onEdit={() => router.push(`/device/edit/${d.device_id}`)} onDelete={() => remove(d)} />)}
+    {list.map(d => <DeviceCard key={d.device_id} device={d} />)}
     {!state.loading && !state.error && !list.length && <View style={styles.empty}>
       <Text style={styles.emptyTitle}>No devices found</Text>
-      <Text style={styles.emptyText}>No accessible devices match this view. Your account may not have a farm yet.</Text>
+      <Text style={styles.emptyText}>{cages.length ? 'No devices match this filter or search.' : deviceManagementEnabled() ? 'Tap + to add your first cage device.' : 'No cage devices are available in this snapshot.'}</Text>
     </View>}
     <Modal visible={sortOpen} transparent animationType="fade" onRequestClose={() => setSortOpen(false)}>
       <Pressable style={styles.modalBack} onPress={() => setSortOpen(false)}>
