@@ -3,14 +3,13 @@
 // creation; only the name can change. Callers reload lists after success.
 import { userMessage } from '../lib/userMessages';
 import type { FarmingType } from '../types/device';
-import { apiDelete, apiPatch, apiPost } from './apiClient';
+import { apiDelete, apiPatch, apiPost, localBackendWrites } from './apiClient';
 
 export const DEVICE_CODE_PATTERN = /^[A-Z0-9-]{3,32}$/;
 export const DEVICE_NAME_MAX = 64;
 
 /** Management needs the local Backend; cloud snapshot mode is read-only. */
-export const deviceManagementEnabled = () =>
-  process.env.EXPO_PUBLIC_DATA_SOURCE !== 'cloud';
+export const deviceManagementEnabled = localBackendWrites;
 
 export const normalizeDeviceCode = (value: string) =>
   value.trim().toUpperCase();

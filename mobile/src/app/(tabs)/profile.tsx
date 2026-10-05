@@ -13,6 +13,7 @@ import { COLORS } from '../../constants/theme';
 import { useAuth } from '../../contexts/AuthContext';
 import { getAlerts } from '../../services/detectionService';
 import { getCloudProfile } from '../../services/cloudProfileService';
+import { getAlertNotificationSettings } from '../../services/settingsService';
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();
@@ -39,6 +40,8 @@ export default function ProfileScreen() {
   }, [user?.id]));
 
   const alertState=useBackendData(getAlerts);
+  const alertPref=useBackendData(getAlertNotificationSettings);
+  const alertPrefText=alertPref.data ? (alertPref.data.in_app_enabled ? 'In-app alerts on' : 'In-app alerts off') : alertPref.loading ? 'Loading settings…' : 'Show or hide the header alert icon';
   const active=(alertState.data??[]).filter(a=>a.alert_status==='active').length;
   const logout = () => Alert.alert('Sign out?', 'End the HenSense session on this phone?', [
     { text: 'Cancel', style: 'cancel' },
@@ -67,6 +70,7 @@ export default function ProfileScreen() {
     <Text style={styles.group}>ACCOUNT & SETTINGS</Text>
     <MenuRow title="Cage Monitoring Settings" subtitle="Intervals, schedules and thresholds" icon="grid-outline" onPress={() => router.push('/settings/cage')} />
     <MenuRow title="Free-range Monitoring Settings" subtitle="Snapshot intervals and thresholds" icon="leaf-outline" onPress={() => router.push('/settings/free-range')} />
+    <MenuRow title="Alert Settings" subtitle={alertPrefText} icon="notifications-outline" tone="red" onPress={() => router.push('/settings/alerts')} />
     <Pressable disabled={pending} onPress={logout} style={styles.signOut}><Ionicons name="log-out-outline" size={18} color={COLORS.danger}/><Text style={styles.signOutText}>{pending ? 'Signing out…' : 'Sign out'}</Text></Pressable>
     <Text style={styles.note}>Account information syncs with HenSense Web when each app refreshes or reopens its Profile. Monitoring data and settings are read from the shared Backend.</Text>
   </AppScreen>;

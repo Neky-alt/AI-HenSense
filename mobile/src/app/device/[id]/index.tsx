@@ -383,6 +383,22 @@ const runDetection = async () => {
       </View>
 
 
+      <View style={styles.retention}>
+        <Ionicons
+          name="information-circle-outline"
+          size={14}
+          color={COLORS.textSecondary}
+        />
+
+        <Text style={styles.retentionText}>
+          Detection images are kept for 30
+          days, then deleted automatically
+          on the device and in the cloud.
+          Counts and history records are
+          kept.
+        </Text>
+      </View>
+
       <Text style={styles.updated}>
         Updated{' '}
         {formatDeviceUpdate(
@@ -603,6 +619,20 @@ const styles = StyleSheet.create({
     fontSize: 10.5,
     fontWeight: '800',
     color: COLORS.primaryDark,
+  },
+
+  retention: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'flex-start',
+    marginTop: 12,
+  },
+
+  retentionText: {
+    flex: 1,
+    fontSize: 9.5,
+    lineHeight: 14,
+    color: COLORS.textSecondary,
   },
 
   removeBtn: {

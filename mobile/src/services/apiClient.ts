@@ -1,6 +1,8 @@
 import { accountRequest } from './accountRequest';
 import { serviceError } from '../lib/userMessages';
 // Expo statically inlines EXPO_PUBLIC variables; never fall back to phone localhost.
+/** Writes need the local Backend; cloud snapshot mode is read-only (same rule as Web). */
+export const localBackendWrites = () => process.env.EXPO_PUBLIC_DATA_SOURCE !== 'cloud';
 export const API_BASE_URL = (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').trim().replace(/\/$/, '');
 export function resolveBackendUrl(path: string, base = API_BASE_URL): string {
   // Cloud mode returns absolute HTTPS signed URLs and does not require a LAN API address.

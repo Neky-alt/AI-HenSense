@@ -108,3 +108,34 @@ export async function saveMonitoringSettings(
 
   return toMonitoringSettings(raw);
 }
+
+interface ApiNotificationSettings {
+  in_app_enabled: boolean;
+  email_enabled: boolean;
+  push_enabled: boolean;
+}
+
+export interface AlertNotificationSettings {
+  in_app_enabled: boolean;
+}
+
+/** Whether active alerts are shown in the app header (Web: Alert Settings). */
+export async function getAlertNotificationSettings(
+  _id = '',
+  signal?: AbortSignal
+): Promise<AlertNotificationSettings> {
+  const raw = await apiGet<ApiNotificationSettings>('/notification-settings', signal);
+  return { in_app_enabled: raw.in_app_enabled };
+}
+
+export async function saveAlertNotificationSettings(
+  value: AlertNotificationSettings
+): Promise<AlertNotificationSettings> {
+  // Email / push delivery does not exist in this system, so they stay off.
+  const raw = await apiPut<ApiNotificationSettings>('/notification-settings', {
+    in_app_enabled: value.in_app_enabled,
+    email_enabled: false,
+    push_enabled: false,
+  });
+  return { in_app_enabled: raw.in_app_enabled };
+}

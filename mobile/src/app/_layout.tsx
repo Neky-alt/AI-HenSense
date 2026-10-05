@@ -14,6 +14,7 @@ const PROTECTED_ROUTES = [
   'quick-detection/index',
   'quick-detection/history',
   'quick-detection/[id]',
+  'settings/alerts',
   'settings/cage',
   'settings/free-range',
   'profile/edit',
