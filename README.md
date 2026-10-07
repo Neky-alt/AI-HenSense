@@ -1,87 +1,82 @@
-# HenSense（Country Watch）
+# HenSense · AI 家禽智能监测系统
 
-HenSense 是 COMP5703 的家禽监测系统：Raspberry Pi 拍照并在本地运行 AI，Backend 保存检测结果，Web / Mobile 查看监测、历史、告警，并管理设备。AI 结果是模型估计，不能作为经过核实的个体产蛋结论。
+HenSense（Country Watch）是一个结合计算机视觉、树莓派和 Web / 移动端的家禽监测项目。系统通过设备采集图像，使用 YOLO + ProtoMIL 进行检测与分析，并提供监测看板、历史记录、告警和设备管理功能。
 
-## 从哪里开始
+## 主要功能
 
-1. [部署指南](docs/DEPLOYMENT.md)：安装依赖、配置 Supabase、生成演示数据包、启动服务。
-2. [交接清单](docs/HANDOVER.md)：当前完成情况、新队友检查表、未决问题。
-3. 操作人员看 [用户手册](docs/USER_GUIDE.md)；开发人员看 [架构](docs/ARCHITECTURE.md)、[API 参考](docs/API_REFERENCE.md) 和 [Pi Worker](docs/PI_WORKER.md)。
+- **智能检测**：树莓派拍照并在本地运行 AI，上传检测结果与图片。
+- **监测看板**：查看笼养（Cage）和散养（Free-range）设备状态、统计与最新结果。
+- **设备管理**：添加、重命名、移除设备，支持手动发起检测和自动监测。
+- **历史与告警**：查看原图、标注图和检测历史，管理告警与图片保留。
+- **移动端检测**：手机拍照上传，使用 Quick Detection 获取结果。
+- **账户与云同步**：使用 Supabase 登录，支持本地数据与云端同步。
 
-## 结构
+## 技术栈与目录
 
-| 目录 | 技术与职责 |
-|---|---|
-| `backend/` | FastAPI、SQLAlchemy、SQLite；权限、设备管理、检测与告警、设置、媒体、硬件接口、云同步 Worker |
-| `pi_worker/` | Raspberry Pi 端：心跳、领取命令、拍照、本地 YOLO + ProtoMIL 推理、上传结果 |
-| `web/` | React、TypeScript、Vite；监测、设备管理、历史、设置、账户 |
-| `mobile/` | Expo、React Native；监测、Quick Detection（Mobile 组维护） |
-| `ai_service/hen_repro/` | 独立 AI 服务；只给 Quick Detection 和 Backend `/detect` 使用 |
-| `docs/` | 正式中文文档 |
-| Supabase | Auth、PostgreSQL、私有 Storage；云端数据和登录 |
+| 目录 | 技术 / 用途 |
+| --- | --- |
+| `web/` | React + TypeScript + Vite，Web 管理界面 |
+| `mobile/` | Expo + React Native，移动端应用 |
+| `backend/` | FastAPI + SQLAlchemy + SQLite，业务 API 与同步服务 |
+| `pi_worker/` | 树莓派采集、命令执行与本地 AI 推理 |
+| `ai_service/hen_repro/` | YOLO + ProtoMIL 独立推理服务，供 Quick Detection 使用 |
+| `docs/` | 部署、架构、API、测试与用户文档 |
 
-## 快速启动（依赖和配置已就绪后）
+云端使用 Supabase Auth、PostgreSQL 和 Storage。
 
-Backend（Windows `cmd`；macOS 把 `.venv\Scripts\python` 换成 `.venv/bin/python`）：
+## 快速开始
 
-```bat
+环境要求：Python 3.12–3.14、Node.js 24.x。以下为 macOS / Linux 命令。
+
+```bash
+git clone https://github.com/Neky-alt/AI-.git
+cd AI-
+
+# 安装后端依赖
 cd backend
-.venv\Scripts\python -m scripts.start_backend --check
-.venv\Scripts\python -m scripts.start_backend
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+cp -n .env.example .env.runtime
+
+# 返回根目录并安装 Web 依赖
+cd ../web
+npm ci
+cp -n .env.example .env.local
 ```
 
-Web：
+启动前，按照 [部署指南](docs/DEPLOYMENT.md) 配置 Supabase、已有数据库与媒体目录，并填写环境变量。仓库不包含模型权重、运行数据库、图片或真实密钥，这些资源需要另行准备；仅安装依赖不能直接运行完整系统。
 
-```bat
+在两个终端分别启动：
+
+```bash
+# 终端 1：在仓库根目录执行
+cd backend
+.venv/bin/python -m scripts.start_backend --check
+# 预检通过后启动
+.venv/bin/python -m scripts.start_backend
+```
+
+```bash
+# 终端 2：在仓库根目录执行
 cd web
 npm run dev
 ```
 
-Pi Worker 见 [PI_WORKER](docs/PI_WORKER.md)；Mobile 见 Mobile 组说明。固定端口：Backend **8006**、AI **8004**、Web **5173**、Metro **8081**。Backend 只接受已存在的数据库和媒体目录，禁止 `--reload` 和启动时自动迁移。
+默认地址：Web `http://localhost:5173`，Backend `http://localhost:8006`，AI 服务端口 `8004`。后端使用项目启动脚本，不使用 `--reload`。
 
-## 功能概览
+移动端、独立 AI 服务及树莓派的配置和启动步骤见 [部署指南](docs/DEPLOYMENT.md) 与 [Pi Worker 文档](docs/PI_WORKER.md)。
 
-- 登录、注册、密码恢复、Profile（Supabase）。
-- Cage / Free-range 监测、设备详情、检测历史、原图 / 标注图、告警列表；Offline 设备显示 `Last Recorded Result`。
-- **设备管理**：添加（Device ID 全局唯一）、改名、移除（保留历史）、移除并删除全部历史（本地 + 云端）。
-- **Run Detection Now**：Web / Mobile 发命令 → Pi 拍照并本地推理 → Backend 保存 → 页面显示。命令有超时和防重复。
-- **自动监测**：Cage 按设置的时间 / 间隔采样；Free-range 按快照间隔生成正式 Snapshot。
-- **设置**：Cage / Free-range 监测设置、In-app 告警开关，都保存在 Backend。
-- **历史删除**：删除单张图片或整条记录，同步到云端。
-- **图片保留**：检测图片固定保留 30 天，到期自动删除（Pi SD 卡、Backend 媒体、云端副本），记录和数量保留。
-- Mobile Quick Detection：手机拍照上传检测，独立历史，不影响设备统计。
+## 项目文档
 
-尚未完成：Pi 开机自启（systemd）、模型缓存、多人共享 Farm、邮件 / Push 通知、公网部署。详见 [交接清单](docs/HANDOVER.md)。
+- [部署指南](docs/DEPLOYMENT.md)：依赖、环境变量、数据准备与启动步骤。
+- [用户手册](docs/USER_GUIDE.md)：页面功能与操作说明。
+- [系统架构](docs/ARCHITECTURE.md)：模块职责与数据流。
+- [API 参考](docs/API_REFERENCE.md)：后端接口与认证规则。
+- [测试说明](docs/TESTING.md)：测试命令与人工验收清单。
+- [交接清单](docs/HANDOVER.md)：当前状态、资源准备和待完成事项。
 
-## 测试
+## 项目状态
 
-```bat
-cd backend
-set DATABASE_URL=sqlite:///:memory:
-.venv\Scripts\python -m pytest -q
-```
+本项目为 COMP5703 课程项目，目前支持本地部署及设备联调。树莓派开机自启、多人共享 Farm、邮件 / Push 通知与公网部署仍待完善，具体进度见交接清单。
 
-```bat
-cd web
-npm test
-npm run build
-```
-
-详细范围和 Windows 注意事项见 [测试说明](docs/TESTING.md)。
-
-## 文档
-
-| 文档 | 内容 |
-|---|---|
-| [DEPLOYMENT](docs/DEPLOYMENT.md) | 安装、配置、演示数据包、启动、排错 |
-| [USER_GUIDE](docs/USER_GUIDE.md) | 操作说明（保留英文界面名称） |
-| [ARCHITECTURE](docs/ARCHITECTURE.md) | 模块、数据流、Local / Cloud 访问 |
-| [API_REFERENCE](docs/API_REFERENCE.md) | 全部 Backend 路由、认证、错误码 |
-| [DEVICE_MANAGEMENT_API](docs/DEVICE_MANAGEMENT_API.md) | 设备增删改的规则、错误码、云端一致性、Mobile 接入 |
-| [PI_WORKER](docs/PI_WORKER.md) | Pi 配置、运行、硬件接口、命令生命周期 |
-| [DATABASE_AND_SYNC](docs/DATABASE_AND_SYNC.md) | 表、媒体、删除与保留、Worker 同步 |
-| [CLOUD_HANDOVER](docs/CLOUD_HANDOVER.md) | Supabase 权限、密钥、管理员待办 |
-| [TESTING](docs/TESTING.md) | 自动化测试、人工验收清单 |
-| [HANDOVER](docs/HANDOVER.md) | 交付状态、检查表、私下资源、未决项 |
-
-仓库不包含真实密钥、SQLite、媒体、模型权重或签名材料。
+AI 检测结果为模型估计，仅用于辅助监测，不能作为经过核实的个体产蛋结论。
